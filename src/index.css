@@ -1,0 +1,46 @@
+@import "tailwindcss";
+
+@theme {
+  --color-ink: #15120e;
+  --color-cream: #f7f2e7;
+  --color-gold: #c9922e;
+  --color-muted: #6b6459;
+  --font-serif: 'Fraunces', Georgia, serif;
+  --font-sans: 'Geist', system-ui, sans-serif;
+}
+
+/* Tablet and desktop layouts are built to fixed design widths (1024 / 1440). Between them, clip instead of showing a horizontal scrollbar. */
+html,
+body {
+  overflow-x: clip;
+}
+
+/* Tailwind v4 resets buttons to the default cursor; show the pointer on everything clickable. */
+@layer base {
+  a[href],
+  button,
+  summary,
+  select,
+  label:has(input[type='checkbox']),
+  label:has(input[type='radio']),
+  [role='button'],
+  [role='radio'],
+  input[type='checkbox'],
+  input[type='radio'],
+  input[type='file'] {
+    cursor: pointer;
+  }
+
+  button:disabled,
+  input:disabled,
+  select:disabled {
+    cursor: not-allowed;
+  }
+}
+
+body {
+  margin: 0;
+  font-family: var(--font-sans);
+  background: var(--color-ink);
+  color: var(--color-cream);
+}
