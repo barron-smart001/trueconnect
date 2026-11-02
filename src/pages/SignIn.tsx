@@ -9,7 +9,7 @@ import {
   fieldClass,
   labelClass,
 } from '../components/auth/parts'
-import { ApiError, signIn } from '../lib/api'
+import { ApiError, signIn, signInWithOAuth, type OAuthProvider } from '../lib/api'
 import { setUser } from '../lib/session'
 import { isEmail } from '../lib/validation'
 
@@ -25,6 +25,19 @@ export function SignIn() {
   const navigate = useNavigate()
   const [errors, setErrors] = useState<Errors>(initialErrors)
   const [pending, setPending] = useState(false)
+  const [pendingProvider, setPendingProvider] = useState<OAuthProvider | null>(null)
+
+  async function onOAuth(provider: OAuthProvider) {
+    setPendingProvider(provider)
+    setErrors((current) => ({ ...current, form: undefined }))
+    try {
+      await signInWithOAuth(provider, '/dashboard')
+    } catch (err) {
+      const api = err instanceof ApiError ? err : new ApiError('Something went wrong. Please try again.')
+      setErrors((current) => ({ ...current, form: api.message }))
+      setPendingProvider(null)
+    }
+  }
 
   async function onSubmit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault()
@@ -90,13 +103,13 @@ export function SignIn() {
 
         <button
           type="submit"
-          disabled={pending}
+          disabled={pending || pendingProvider !== null}
           className="mt-6 h-[39px] w-full rounded-md bg-gold text-[14px] font-medium text-ink disabled:opacity-70"
         >
           Sign in
         </button>
 
-        <OrContinueWith googleLabel={errors.email || errors.password ? 'Google' : undefined} />
+        <OrContinueWith onProvider={onOAuth} disabled={pending || pendingProvider !== null} pendingProvider={pendingProvider} />
 
         <p className="mt-[23px] text-center text-[12px] leading-5 text-[#5c5748]">
           Don&apos;t have an account? <Link to="/signup" className="text-[14px] text-gold">Sign up</Link>

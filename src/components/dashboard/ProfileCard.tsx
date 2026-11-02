@@ -6,10 +6,11 @@ const round = 'flex items-center justify-center rounded-full border border-[#efe
 type Props = {
   profile: Profile | null
   /** Why there is no profile to show. */
-  emptyReason: 'limit' | 'none'
+  emptyReason: 'limit' | 'none' | 'loading'
   hoursLeft: number
   saved: boolean
   canUndo: boolean
+  pending: boolean
   onPass: () => void
   onLike: () => void
   onUndo: () => void
@@ -32,8 +33,8 @@ function Photo({ profile }: { profile: Profile }) {
   )
 }
 
-export function ProfileCard({ profile, emptyReason, hoursLeft, saved, canUndo, onPass, onLike, onUndo, onSave }: Props) {
-  const disabled = !profile
+export function ProfileCard({ profile, emptyReason, hoursLeft, saved, canUndo, pending, onPass, onLike, onUndo, onSave }: Props) {
+  const disabled = !profile || pending
   return (
     <section aria-label="Suggested profile" className="flex flex-col items-center">
       {profile ? (
@@ -63,19 +64,25 @@ export function ProfileCard({ profile, emptyReason, hoursLeft, saved, canUndo, o
       ) : (
         <div className="flex h-[473px] w-full max-w-[378px] flex-col items-center justify-center md:h-[557.5px] rounded-[24px] border border-[#e4dcd1] bg-white px-10 text-center">
           <h2 className="font-serif text-[16px] font-semibold leading-6 text-ink">
-            {emptyReason === 'limit' ? "You've used today's introductions" : 'No more profiles right now'}
+            {emptyReason === 'loading'
+              ? 'Loading introductions…'
+              : emptyReason === 'limit'
+                ? "You've used today's introductions"
+                : 'No profiles match these filters right now'}
           </h2>
           <p className="mt-1 text-[14px] leading-[22px] text-[#5c5748]">
-            {emptyReason === 'limit'
-              ? `Fresh introductions arrive in ${hoursLeft}h. Quality over quantity.`
-              : 'Try widening your filters to see more people.'}
+            {emptyReason === 'loading'
+              ? 'Finding people who fit your preferences.'
+              : emptyReason === 'limit'
+                ? `Fresh introductions arrive in ${hoursLeft}h. Quality over quantity.`
+                : 'Try widening your filters to see more people.'}
           </p>
         </div>
       )}
 
       <div className="mt-[16.5px] flex items-center gap-[18px]">
         <button type="button" aria-label="Pass" disabled={disabled} onClick={onPass} className={`${round} size-14 text-[#5c5748]`}><X size={20} strokeWidth={1.5} /></button>
-        <button type="button" aria-label="Undo" disabled={!canUndo} onClick={onUndo} className={`${round} size-[46px] text-[#8a6a1f]`}><Undo2 size={18} strokeWidth={1.5} /></button>
+        <button type="button" aria-label="Undo" disabled={!canUndo || pending} onClick={onUndo} className={`${round} size-[46px] text-[#8a6a1f]`}><Undo2 size={18} strokeWidth={1.5} /></button>
         <button
           type="button"
           aria-label="Like"
@@ -91,7 +98,7 @@ export function ProfileCard({ profile, emptyReason, hoursLeft, saved, canUndo, o
       </div>
 
       <p className="mt-[24.5px] flex items-center gap-3 text-[12px] text-[#5c5748]">
-        <Shield size={14} strokeWidth={1.5} className="text-[#8a6a1f]" /> Every profile here is ID-verified before you ever see it
+        <Shield size={14} strokeWidth={1.5} className="text-[#8a6a1f]" /> Verification status is checked before profiles are shown
       </p>
     </section>
   )

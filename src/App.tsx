@@ -1,6 +1,7 @@
 import { Route, Routes } from 'react-router-dom'
 import { RouteEffects } from './components/RouteEffects'
 import { Dashboard } from './pages/Dashboard'
+import { AuthCallback } from './pages/AuthCallback'
 import { ForgotPassword } from './pages/ForgotPassword'
 import { Home } from './pages/Home'
 import { Onboarding } from './pages/Onboarding'
@@ -45,6 +46,7 @@ function App() {
         <Route path="/" element={<Home />} />
         <Route path="/signup" element={<SignUp />} />
         <Route path="/signin" element={<SignIn />} />
+        <Route path="/auth/callback" element={<AuthCallback />} />
         <Route path="/forgot-password" element={<ForgotPassword />} />
         <Route path="/update-password" element={<UpdatePassword />} />
         <Route path="/dashboard" element={<Dashboard />} />

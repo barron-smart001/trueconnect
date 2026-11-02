@@ -10,7 +10,7 @@ import {
   fieldClass,
   labelClass,
 } from '../components/auth/parts'
-import { ApiError, signUp } from '../lib/api'
+import { ApiError, signInWithOAuth, signUp, type OAuthProvider } from '../lib/api'
 import { setUser } from '../lib/session'
 import { MIN_PASSWORD, isEmail } from '../lib/validation'
 
@@ -20,9 +20,30 @@ type Errors = Partial<Record<Field, string>>
 export function SignUp() {
   const navigate = useNavigate()
   const [errors, setErrors] = useState<Errors>({})
+  const [confirmationMessage, setConfirmationMessage] = useState('')
   const [pending, setPending] = useState(false)
+  const [pendingProvider, setPendingProvider] = useState<OAuthProvider | null>(null)
+  const [consentAccepted, setConsentAccepted] = useState(false)
 
   const clear = (field: Field) => () => errors[field] && setErrors((e) => ({ ...e, [field]: undefined }))
+
+  async function onOAuth(provider: OAuthProvider) {
+    if (!consentAccepted) {
+      setErrors((current) => ({ ...current, consent: 'Please accept to continue' }))
+      document.getElementById('consent')?.focus()
+      return
+    }
+
+    setPendingProvider(provider)
+    setErrors((current) => ({ ...current, form: undefined }))
+    try {
+      await signInWithOAuth(provider, '/onboarding')
+    } catch (err) {
+      const api = err instanceof ApiError ? err : new ApiError('Something went wrong. Please try again.')
+      setErrors((current) => ({ ...current, form: api.message }))
+      setPendingProvider(null)
+    }
+  }
 
   async function onSubmit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault()
@@ -47,8 +68,13 @@ export function SignUp() {
 
     setPending(true)
     try {
-      setUser(await signUp({ name, email, password }))
-      navigate('/onboarding')
+      const result = await signUp({ name, email, password })
+      if (result.requiresEmailConfirmation) {
+        setConfirmationMessage('Check your email to confirm your account, then sign in.')
+      } else {
+        setUser(result.user)
+        navigate('/onboarding')
+      }
     } catch (err) {
       const api = err instanceof ApiError ? err : new ApiError('Something went wrong. Please try again.')
       setErrors({ [(api.field as Field) ?? 'form']: api.message })
@@ -102,9 +128,13 @@ export function SignUp() {
               id="consent"
               name="consent"
               type="checkbox"
+              checked={consentAccepted}
               aria-invalid={errors.consent ? true : undefined}
               aria-describedby={errors.consent ? 'consent-error' : undefined}
-              onChange={clear('consent')}
+              onChange={(event) => {
+                setConsentAccepted(event.currentTarget.checked)
+                clear('consent')()
+              }}
               className="peer sr-only"
             />
             <span
@@ -128,16 +158,17 @@ export function SignUp() {
         </div>
         <FieldError id="consent-error">{errors.consent}</FieldError>
         <FieldError id="form-error">{errors.form}</FieldError>
+        {confirmationMessage && <p role="status" className="mt-3 text-center text-[14px] leading-[22px] text-[#5c5748]">{confirmationMessage}</p>}
 
         <button
           type="submit"
-          disabled={pending}
+          disabled={pending || pendingProvider !== null}
           className="mt-[23px] h-[39px] w-full rounded-md bg-gold text-[14px] font-medium text-ink disabled:opacity-70"
         >
           Create an Account
         </button>
 
-        <OrContinueWith />
+        <OrContinueWith onProvider={onOAuth} disabled={pending || pendingProvider !== null} pendingProvider={pendingProvider} />
 
         <p className="mt-[25px] text-center text-[12px] leading-5 text-[#5c5748]">
           Already have an account? <Link to="/signin" className="text-[14px] text-gold">Sign in</Link>

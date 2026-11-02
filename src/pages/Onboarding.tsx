@@ -1,9 +1,10 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { Check, ChevronRight, Clock, FileText, Briefcase, MapPin, ShieldCheck, type LucideIcon } from 'lucide-react'
 import { OnboardingHeader } from '../components/onboarding/OnboardingHeader'
 import { LocationModal } from '../components/onboarding/LocationModal'
-import { STEP_PATH, nextStep, useOnboardingProgress, type Step } from '../lib/onboarding'
+import { STEP_PATH, nextStep, type Step } from '../lib/onboarding'
+import { ApiError, getOnboardingProgress } from '../lib/api'
 import { firstName, useUser } from '../lib/session'
 
 type Status = 'done' | 'required' | 'not-started'
@@ -53,8 +54,24 @@ export function Onboarding() {
   const [modalOpen, setModalOpen] = useState(() => new URLSearchParams(window.location.search).has('location'))
   const navigate = useNavigate()
   const user = useUser()
-  const done = useOnboardingProgress()
+  const [done, setDone] = useState<Step[]>([])
   const next = nextStep(done)
+  const [progressError, setProgressError] = useState('')
+
+  useEffect(() => {
+    let active = true
+    getOnboardingProgress()
+      .then((progress) => {
+        if (active) {
+          setDone(progress)
+          setProgressError('')
+        }
+      })
+      .catch((error) => {
+        if (active) setProgressError(error instanceof ApiError ? error.message : 'Could not load onboarding progress.')
+      })
+    return () => { active = false }
+  }, [])
 
   // First unfinished step is "Required", later ones "Not started", finished ones "Done".
   const rows = steps.map((s) => ({
@@ -143,6 +160,7 @@ export function Onboarding() {
           </button>
           <Link to="/" className="text-[14px] text-[#5c5748]">I&apos;ll do this later</Link>
         </div>
+        {progressError && <p role="alert" className="mt-4 text-[14px] leading-[22px] text-[#ff383c]">{progressError}</p>}
 
         <section className="mt-6 flex items-center gap-[27px] rounded-lg bg-ink py-4 pl-4 md:py-[27px] pr-6 md:pl-[29px] md:pr-8">
           <span className="flex size-[84px] shrink-0 items-center justify-center rounded-full border-[10px] border-[#393631] bg-[#1d1912]">

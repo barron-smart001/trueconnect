@@ -1,30 +1,49 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { Settings2 } from 'lucide-react'
 import { DashboardHeader } from '../components/dashboard/DashboardHeader'
 import { FiltersPanel } from '../components/dashboard/FiltersPanel'
 import { ProfileCard } from '../components/dashboard/ProfileCard'
 import { IntroductionsCard, QuickPreferences, SafetyNote } from '../components/dashboard/SidePanels'
 import {
-  DAILY_INTRODUCTIONS,
-  DEFAULT_FILTERS,
-  PROFILES,
-  STARTING_USED,
-  hoursUntilReset,
-  matches,
-  type Filters,
-} from '../lib/discover'
-
-type Decision = { id: number; action: 'like' | 'pass' }
+  ApiError,
+  loadDashboard,
+  recordDiscoverAction,
+  toggleSavedProfile,
+  undoLastDiscoverAction,
+  type DashboardData,
+} from '../lib/api'
+import { DAILY_INTRODUCTIONS, DEFAULT_FILTERS, hoursUntilReset, type Filters } from '../lib/discover'
 
 export function Dashboard() {
-  // `draft` is what the panel shows; `applied` is what the deck is filtered by (set by "Apply filters").
+  const [dashboard, setDashboard] = useState<DashboardData | null>(null)
   const [draft, setDraft] = useState<Filters>(DEFAULT_FILTERS)
   const [applied, setApplied] = useState<Filters>(DEFAULT_FILTERS)
-  const [decisions, setDecisions] = useState<Decision[]>([])
-  const [saved, setSaved] = useState<Set<number>>(new Set())
   const [hoursLeft, setHoursLeft] = useState(hoursUntilReset)
-  // Below 768px the filters live in an overlay opened by "All Filters"; from 768px up they are a fixed column.
   const [filtersOpen, setFiltersOpen] = useState(false)
+  const [loading, setLoading] = useState(true)
+  const [pendingAction, setPendingAction] = useState(false)
+  const [error, setError] = useState('')
+
+  const refresh = useCallback(async (filters?: Filters) => {
+    setLoading(true)
+    try {
+      const result = await loadDashboard(filters)
+      setDashboard(result)
+      setDraft(result.filters)
+      setApplied(result.filters)
+      setError('')
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'Could not load discovery. Please try again.')
+    } finally {
+      setLoading(false)
+    }
+  }, [])
+
+  useEffect(() => {
+    // Load member-specific filters and recommendations from Supabase on entry.
+    // oxlint-disable-next-line react/set-state-in-effect
+    void refresh()
+  }, [refresh])
 
   useEffect(() => {
     const timer = setInterval(() => setHoursLeft(hoursUntilReset()), 60_000)
@@ -33,38 +52,84 @@ export function Dashboard() {
 
   useEffect(() => {
     if (!filtersOpen) return
-    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && setFiltersOpen(false)
+    const onKey = (event: KeyboardEvent) => event.key === 'Escape' && setFiltersOpen(false)
     document.addEventListener('keydown', onKey)
     return () => document.removeEventListener('keydown', onKey)
   }, [filtersOpen])
 
-  const used = Math.min(DAILY_INTRODUCTIONS, STARTING_USED + decisions.length)
-  const limitReached = used >= DAILY_INTRODUCTIONS
+  const profile = dashboard?.profiles[0] ?? null
+  const used = dashboard?.used ?? 0
+  const total = dashboard?.total ?? DAILY_INTRODUCTIONS
 
-  const queue = useMemo(() => {
-    const seen = new Set(decisions.map((d) => d.id))
-    return PROFILES.filter((p) => matches(p, applied) && !seen.has(p.id))
-  }, [applied, decisions])
-  const profile = limitReached ? null : (queue[0] ?? null)
-
-  const decide = (action: Decision['action']) => profile && setDecisions((d) => [...d, { id: profile.id, action }])
-  const undo = () => setDecisions((d) => d.slice(0, -1))
-  const toggleSaved = () =>
-    profile &&
-    setSaved((s) => {
-      const next = new Set(s)
-      if (!next.delete(profile.id)) next.add(profile.id)
-      return next
-    })
-
-  // The "Verified only" toggle in Quick preferences changes the filter straight away.
-  const setVerified = (verifiedOnly: boolean) => {
-    setDraft((f) => ({ ...f, verifiedOnly }))
-    setApplied((f) => ({ ...f, verifiedOnly }))
+  async function applyFilters(filters: Filters) {
+    setPendingAction(true)
+    setError('')
+    try {
+      const result = await loadDashboard(filters)
+      setDashboard(result)
+      setDraft(result.filters)
+      setApplied(result.filters)
+      setFiltersOpen(false)
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'Could not apply these filters. Please try again.')
+    } finally {
+      setPendingAction(false)
+    }
   }
-  const reset = () => {
+
+  async function decide(action: 'like' | 'pass') {
+    if (!profile) return
+    setPendingAction(true)
+    setError('')
+    try {
+      await recordDiscoverAction(profile.id, action)
+      const result = await loadDashboard(applied)
+      setDashboard(result)
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'Could not save your response. Please try again.')
+    } finally {
+      setPendingAction(false)
+    }
+  }
+
+  async function undo() {
+    setPendingAction(true)
+    setError('')
+    try {
+      await undoLastDiscoverAction()
+      const result = await loadDashboard(applied)
+      setDashboard(result)
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'Could not undo that response. Please try again.')
+    } finally {
+      setPendingAction(false)
+    }
+  }
+
+  async function toggleSaved() {
+    if (!profile) return
+    setPendingAction(true)
+    setError('')
+    try {
+      await toggleSavedProfile(profile.id)
+      const result = await loadDashboard(applied)
+      setDashboard(result)
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'Could not update your saved profiles. Please try again.')
+    } finally {
+      setPendingAction(false)
+    }
+  }
+
+  async function setVerified(verifiedOnly: boolean) {
+    const next = { ...applied, verifiedOnly }
+    setDraft(next)
+    await applyFilters(next)
+  }
+
+  async function reset() {
     setDraft(DEFAULT_FILTERS)
-    setApplied(DEFAULT_FILTERS)
+    await applyFilters(DEFAULT_FILTERS)
   }
 
   return (
@@ -86,34 +151,33 @@ export function Dashboard() {
           role={filtersOpen ? 'dialog' : undefined}
           aria-modal={filtersOpen || undefined}
           aria-label={filtersOpen ? 'Filters' : undefined}
-          onClick={(e) => e.target === e.currentTarget && setFiltersOpen(false)}
+          onClick={(event) => event.target === event.currentTarget && setFiltersOpen(false)}
         >
           <FiltersPanel
             filters={draft}
             onChange={setDraft}
-            onApply={() => {
-              setApplied(draft)
-              setFiltersOpen(false)
-            }}
-            onReset={reset}
+            onApply={() => void applyFilters(draft)}
+            onReset={() => void reset()}
           />
         </div>
         <div className="md:pt-[36px]">
+          {error && <p role="alert" className="mb-4 text-[14px] leading-[22px] text-[#ff383c]">{error}</p>}
           <ProfileCard
             profile={profile}
-            emptyReason={limitReached ? 'limit' : 'none'}
+            emptyReason={loading ? 'loading' : used >= total ? 'limit' : 'none'}
             hoursLeft={hoursLeft}
-            saved={!!profile && saved.has(profile.id)}
-            canUndo={decisions.length > 0}
-            onPass={() => decide('pass')}
-            onLike={() => decide('like')}
-            onUndo={undo}
-            onSave={toggleSaved}
+            saved={!!profile && (dashboard?.savedIds.includes(profile.id) ?? false)}
+            canUndo={dashboard?.canUndo ?? false}
+            pending={pendingAction}
+            onPass={() => void decide('pass')}
+            onLike={() => void decide('like')}
+            onUndo={() => void undo()}
+            onSave={() => void toggleSaved()}
           />
         </div>
         <div className="space-y-6">
-          <IntroductionsCard used={used} total={DAILY_INTRODUCTIONS} hoursLeft={hoursLeft} />
-          <QuickPreferences filters={applied} onVerifiedChange={setVerified} />
+          <IntroductionsCard used={used} total={total} hoursLeft={hoursLeft} />
+          <QuickPreferences filters={applied} onVerifiedChange={(value) => void setVerified(value)} />
           <SafetyNote />
         </div>
       </main>

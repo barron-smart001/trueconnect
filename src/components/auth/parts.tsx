@@ -1,6 +1,7 @@
 import { useState, type CSSProperties, type ReactNode } from 'react'
 import { Eye, EyeClosed } from 'lucide-react'
 import { Link } from 'react-router-dom'
+import type { OAuthProvider } from '../../lib/api'
 
 export const labelClass = 'block text-[14px] font-medium leading-5 text-[#5c5748]'
 
@@ -109,7 +110,15 @@ function AppleIcon() {
   )
 }
 
-export function OrContinueWith({ googleLabel = 'Continue with Google' }: { googleLabel?: string }) {
+export function OrContinueWith({
+  onProvider,
+  disabled = false,
+  pendingProvider = null,
+}: {
+  onProvider: (provider: OAuthProvider) => void
+  disabled?: boolean
+  pendingProvider?: OAuthProvider | null
+}) {
   return (
     <>
       <div className="mt-[17px] flex items-center gap-5 text-[12px] leading-4 text-[#5c5748]">
@@ -117,11 +126,21 @@ export function OrContinueWith({ googleLabel = 'Continue with Google' }: { googl
         or continue with
         <span className="h-px flex-1 bg-[#ede7dc]" />
       </div>
-      <button type="button" className={`mt-[18px] ${socialClass}`}>
-        <GoogleIcon /> {googleLabel}
+      <button
+        type="button"
+        disabled={disabled}
+        onClick={() => onProvider('google')}
+        className={`mt-[18px] ${socialClass} disabled:cursor-not-allowed disabled:opacity-60`}
+      >
+        <GoogleIcon /> {pendingProvider === 'google' ? 'Connecting...' : 'Continue with Google'}
       </button>
-      <button type="button" className={`mt-3.5 ${socialClass}`}>
-        <AppleIcon /> Continue with Apple
+      <button
+        type="button"
+        disabled={disabled}
+        onClick={() => onProvider('apple')}
+        className={`mt-3.5 ${socialClass} disabled:cursor-not-allowed disabled:opacity-60`}
+      >
+        <AppleIcon /> {pendingProvider === 'apple' ? 'Connecting...' : 'Continue with Apple'}
       </button>
     </>
   )

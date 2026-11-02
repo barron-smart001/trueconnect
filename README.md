@@ -1,8 +1,8 @@
 # TrueConnect — frontend
 
 Web frontend for TrueConnect, a verified, intent-based relationship platform for Africans worldwide.
-This repo is **frontend only**: every screen is built to the Figma designs, and every backend call goes through one stub
-file (`src/lib/api.ts`). Section 5 lists what the backend needs to supply.
+This repo contains the TrueConnect frontend and Supabase migrations/Edge Functions. Authentication, newsletter
+subscriptions, onboarding profile data, Persona identity-verification status, and dashboard discovery use Supabase.
 
 - **Stack:** React 19, TypeScript, Vite, Tailwind CSS v4, React Router v7, lucide-react icons
 - **Scope built so far:** desktop (1440px) for the homepage, auth pages and onboarding; the **tablet homepage, auth pages, onboarding and dashboard** (designed at 1024px); the **mobile homepage, menu, auth pages, onboarding and dashboard** (designed at 375px). Breakpoints: base = mobile, `md:` (768px) = tablet, `xl:` (1280px) = desktop.
@@ -18,11 +18,58 @@ npm run preview   # serve the production build locally
 npm run lint      # oxlint
 ```
 
-`npm run build` (which type-checks the code) should pass before you push.
+Copy `.env.example` to `.env.local` and set the Supabase project URL and publishable (or anon) key from your
+Supabase project's API settings before starting the app:
 
-**Lint note:** `npm run lint` uses oxlint, which needs a native binary. On the machine this frontend was built on it was
-blocked by Windows Application Control ("An Application Control policy has blocked this file"), so lint was **not**
-run there. Please run it on your own machine or in CI and fix anything it reports.
+```env
+VITE_SUPABASE_URL=https://your-project.supabase.co
+VITE_SUPABASE_ANON_KEY=your-supabase-publishable-or-anon-key
+```
+
+Configure the project's email confirmation and password recovery redirect settings to allow the app's origin,
+`/update-password`, and `/auth/callback` routes.
+
+To enable Google and Apple sign-up/sign-in, enable both providers in **Supabase Dashboard → Authentication → Providers**
+and enter the OAuth credentials from their developer consoles. Set each provider's callback/return URL to
+`https://<project-ref>.supabase.co/auth/v1/callback`. Add the app origins to **Authentication → URL Configuration**
+redirect URLs, including `http://localhost:5173/auth/callback` for local development and the production app URL with
+`/auth/callback`. The app uses that callback to send new social sign-ups to onboarding and returning users to the
+dashboard. Apple may only provide a user's name on their first authorization, so the app falls back to the email name
+when the provider does not return it later.
+
+Run the SQL files in `supabase/migrations/` in filename order in the Supabase project's SQL Editor. They create the
+newsletter subscriber table, private onboarding tables, private member photo storage and identity status, plus the
+private onboarding-drafts table, city directory, discovery preferences, and server-side matching/action functions with
+row-level security.
+
+The city directory stores approximate city-center coordinates only; it does not collect device GPS or use a third-party
+geocoder. The initial directory is intentionally small. Admins must add supported cities to `supported_cities` before
+members in those cities can save profiles or be matched.
+
+Identity verification uses Persona Hosted Flow. Configure a Persona inquiry template and webhook in the Persona
+dashboard, then set the server-side Supabase Function secrets `PERSONA_API_KEY`, `PERSONA_INQUIRY_TEMPLATE_ID`, and
+`PERSONA_WEBHOOK_SECRET`. Never put these values in a `VITE_` variable. Deploy `persona-create-inquiry` and
+`persona-webhook`; subscribe the webhook to `inquiry.completed`, `inquiry.marked-for-review`, `inquiry.approved`, and
+`inquiry.declined`, and point it at
+`https://<project-ref>.supabase.co/functions/v1/persona-webhook`. Use Persona Sandbox credentials and a Sandbox inquiry
+template until the flow has been tested. Supabase supplies `SUPABASE_URL`, `SUPABASE_ANON_KEY`, and
+`SUPABASE_SERVICE_ROLE_KEY` to Edge Functions.
+
+Alternatively, deploy with the Supabase CLI after installing it and linking the project:
+
+```bash
+supabase login
+supabase link --project-ref <project-ref>
+supabase db push
+supabase secrets set PERSONA_API_KEY="<persona-api-key>" PERSONA_INQUIRY_TEMPLATE_ID="<template-id>" PERSONA_WEBHOOK_SECRET="<webhook-secret>"
+supabase functions deploy persona-create-inquiry
+supabase functions deploy persona-webhook
+```
+
+Replace the quoted placeholders with secrets from Persona. Do not commit credentials or put them in frontend environment
+variables.
+
+`npm run build` (which type-checks the code) should pass before you push.
 
 **Hosting note:** routing uses `BrowserRouter`, so the server must return `index.html` for any unknown path
 (single-page-app fallback). `vite dev` and `vite preview` already do this.
@@ -46,8 +93,8 @@ run there. Please run it on your own machine or in CI and fix anything it report
 | `/membership` `/about` `/careers` `/press` `/contact` `/safety` `/help` `/guidelines` `/privacy` `/terms` `/cookies` `/ambassador` `/invite` | "Coming soon" (no designs yet), inside the marketing header and footer | `src/pages/Placeholder.tsx` |
 | anything else | 404 | `src/pages/Placeholder.tsx` |
 
-Routes are declared in `src/App.tsx`. There is **no auth guard**: any visitor can open `/dashboard`. Add one when real
-auth exists (the signed-in user is available from `useUser()` in `src/lib/session.ts`).
+Routes are declared in `src/App.tsx`. There is **no auth guard**: any visitor can open `/dashboard`. The client-side
+user state in `useUser()` is for UI only and is not an authorization boundary.
 
 The "Coming soon" and 404 pages are **not from Figma** — they exist so no link in the app dead-ends. Replace each page
 when its design arrives (delete its entry from the two lists in `App.tsx`).
@@ -60,10 +107,11 @@ src/
   main.tsx                 app entry (BrowserRouter)
   index.css                Tailwind import + design tokens (colors, fonts)
   lib/
-    api.ts                 STUB API layer — every backend call goes through here (see section 5)
+    api.ts                 Supabase Auth and application backend calls (see section 5)
+    supabase.ts            Supabase client, configured from VITE_SUPABASE_* environment variables
     session.ts             signed-in user (localStorage) + useUser()
     onboarding.ts          which onboarding steps are done (localStorage) + useOnboardingProgress()
-    discover.ts            dashboard filter rules and the demo profile deck
+    discover.ts            dashboard filter rules, value mappings, and display helpers
     validation.ts          email check, minimum password length
   pages/                   one file per route
   components/
@@ -98,33 +146,43 @@ profile quote) and **Geist** for body text (`font-sans`). Body text is 14px; typ
 
 ### How the frontend talks to the backend
 
-Every call is a function in **`src/lib/api.ts`**. Today each one waits ~half a second and succeeds. To connect the real
-API, replace the function bodies with `fetch` calls and keep the signatures.
+Every call is a function in **`src/lib/api.ts`**. Sign-in, sign-up, password reset and password update use Supabase
+Auth; newsletter subscriptions, onboarding details, and Persona verification status are saved to Supabase.
 
 To report a failure, throw `new ApiError(message, field)`: the page shows `message` under the named field
 (`email`, `password`, …) or as a general message when there is no field. Pages already handle this.
 
 | Function | Used by | Notes |
 |---|---|---|
-| `signIn(email, password)` | Sign in | Returns the user. Throw `ApiError('This email is incorrect', 'email')` / `('This password is incorrect', 'password')` to show the designed error state. |
-| `signUp({ name, email, password })` | Sign up | Returns the new user. Then the app goes to `/onboarding`. |
-| `requestPasswordReset(email)` | Reset Password | Must succeed whether or not the email exists (the toast says "if your email exists"). |
-| `updatePassword(password)` | Update Password | Needs the reset token from the emailed link (read it from the URL). |
-| `submitIdentity()` | Identity verification | Currently sends nothing: add ID type, front/back images and selfie. |
-| `subscribeNewsletter(email)` | Footer "Stay in the loop" | |
+| `signIn(email, password)` | Sign in | Supabase Auth password sign-in; the app stores the returned display name and email for its UI. |
+| `signUp({ name, email, password })` | Sign up | Creates a Supabase Auth account; email-confirmation projects show a confirmation prompt. |
+| `requestPasswordReset(email)` | Reset Password | Sends a Supabase recovery email to `/update-password`. |
+| `updatePassword(password)` | Update Password | Updates the password using the Supabase recovery session. |
+| `saveOnboardingProfile(profile)` | Photos & bio | Saves text fields and uploads 3–6 selected photos to the private `member-profile-photos` bucket, restricted to the signed-in member. |
+| `saveOnboardingCompatibility(answers)` | Compatibility questions | Saves private matching answers to `member_compatibility`, restricted to the signed-in member. |
+| `getOnboardingProgress()` | Setup checklist | Rebuilds completed steps from the saved profile, compatibility answers, and identity-verification status. |
+| `getOnboardingProfileDraft()` / `saveOnboardingProfileDraft(...)` | Photos & bio | Loads saved profile fields and private photo previews; "Save & exit" stores unfinished text and selected photos in `member_onboarding_drafts` and the private photo bucket. |
+| `getOnboardingCompatibilityDraft()` / `saveOnboardingCompatibilityDraft(...)` | Compatibility questions | Loads and saves unfinished answers, love-language picks, and notes in the member's private onboarding draft. |
+| `startIdentityVerification()` | Identity verification | Calls an authenticated Supabase Edge Function, which creates or resumes a Persona inquiry and returns a one-time hosted link. Persona collects ID images and the selfie; TrueConnect does not store those documents. |
+| `getIdentityVerificationStatus()` | Identity verification | Reads the signed-in member's private status; a signature-verified Persona webhook updates it. |
+| `loadDashboard(filters?)` | Dashboard | Loads the member's saved filters and server-side matching results, usage count, and saved-profile IDs. Approved members receive signed photo URLs for approved profiles only. |
+| `recordDiscoverAction(profileId, action)` | Dashboard | Records a like or pass, enforces the daily introduction limit, and excludes that profile from subsequent recommendations. |
+| `undoLastDiscoverAction()` | Dashboard | Removes the latest same-day like/pass and restores that profile to the recommendation deck. |
+| `toggleSavedProfile(profileId)` | Dashboard | Adds or removes a profile from the member's private saved list. |
+| `subscribeNewsletter(email)` | Footer "Stay in the loop" | Adds a normalized email to `newsletter_subscribers`; duplicate subscriptions are treated as success. |
 
 ### What already works (no backend needed)
 
 - **Validation** on sign up, sign in, reset password, update password and the newsletter field (required fields,
   email format, password of at least 8 characters, matching confirmation, consent checkbox), with inline messages in the
   designed error style and focus moved to the first problem.
-- **Demo session:** a successful sign in / sign up stores the user in `localStorage` (`tc.user`). Any well-formed
-  email and password signs in. The "Welcome to TrueConnect, <name>" and "You're all set, <name>" headings and the
-  dashboard avatar initial use it (falling back to "Amara" / "A").
-- **Onboarding progress** is saved in `localStorage` (`tc.onboarding`): finishing a step marks it Done in the checklist,
-  advances the "Required" pill and the "N of 4 complete" count, and the checklist's Continue button goes to the next
-  unfinished step (or to the final screen when all are done). Identity verification requires the front of the ID (and the
-  back, except for a passport).
+- **Session display:** successful Supabase sign-in / sign-up stores the display name and email in `localStorage`
+  (`tc.user`) for the UI. Supabase Auth validates credentials and manages its own auth session. The "Welcome to
+  TrueConnect, <name>" and "You're all set, <name>" headings and the dashboard avatar initial use the stored display
+  name (falling back to "Amara" / "A").
+- **Onboarding progress** is loaded from Supabase: saved profile and compatibility rows, plus Persona verification
+  status, determine which checklist steps are Done and where Continue sends the member. Unfinished profile and question
+  drafts are stored in the private `member_onboarding_drafts` table; selected profile photos remain in private storage.
 - **Navigation:** every link goes somewhere. Header, hero, footer and menu links scroll to the matching homepage section
   (`#how-it-works`, `#safety`, `#find-your-lane`, `#reviews`) or open a "Coming soon" page. Each navigation scrolls to the
   top (or to the anchor) and sets the page title.
@@ -134,27 +192,28 @@ To report a failure, throw `new ApiError(message, field)`: the page shows `messa
 
 | Screen | Collects | To do |
 |---|---|---|
-| `/onboarding` | — | Location ("Ikeja, Lagos") is hardcoded. The "New Location Detected" modal should open when the API reports a new location (today it opens only with `?location`). |
-| Photos & bio | `name`, `dob`, gender, phone (+234 prefix), `location` (read-only), looking-for, `bio` (max 500), up to 6 photos, one prompt + `answer` | Values are demo defaults and are **not saved or sent**: only "step done" is remembered. Photos are previewed locally (object URLs); nothing is uploaded. The first three slots show placeholder "A" tiles that count as added photos, so the 3-photo minimum is not enforced. |
-| Compatibility questions | 4 single-choice answers, up to 2 "love language" picks, optional `notes` | Answers live in React state only. Collect and send them. |
-| Identity verification | ID type, front image, back image, selfie, consent checkbox | File picker only stores the file name. Needs real upload and selfie capture ("Open camera" does nothing). |
-| Complete (`/onboarding/complete`) | — | The "Under review" / "Pending" statuses, "Submitted just now", the review time estimates and "3 potential matches found nearby" are hardcoded. |
+| `/onboarding` | — | The welcome card location ("Ikeja, Lagos") is still hardcoded. The "New Location Detected" modal opens only with `?location`. |
+| Photos & bio | `name`, `dob`, gender, phone (+234 prefix), city, looking-for, `bio` (max 500), 3–6 photos, one prompt + `answer` | Text fields, supported city, and private photo object paths are saved to `member_profiles`; photos are stored in Supabase Storage. |
+| Compatibility questions | 4 single-choice answers, up to 2 "love language" picks, optional `notes` | Private answers are saved to `member_compatibility`. |
+| Identity verification | Consent; Persona collects ID type, document, and selfie in its hosted flow | Inquiry creation and one-time links run in a server-side Supabase Edge Function. Status is private and updated only by signature-verified Persona webhooks. Configure the Persona template, API key, webhook secret, and webhook events before enabling this in production. |
+| Complete (`/onboarding/complete`) | — | The actual verification status is checked in the identity step; review time estimates and "3 potential matches found nearby" remain hardcoded. |
 
-"Save & exit", "Save & continue later" and "I'll do this later" currently just go to the homepage.
+"Save & exit" and "Save & continue later" persist profile or compatibility drafts before returning home. "I'll do this later"
+on the setup checklist and identity step returns home; identity status is already persisted by the Persona integration.
 
 ### Dashboard (`/dashboard`)
 
 Built from the tablet "Home" frame (1024px) and the mobile frames (375px); the desktop frame does not exist yet (at desktop
 width the layout keeps the same column widths with larger margins). On mobile the filters open as an overlay from "All
-Filters" and the main nav becomes a bottom tab bar; the mobile filters add an "Active this week" toggle, which is stored but
-does not filter the demo deck yet.
+Filters" and the main nav becomes a bottom tab bar. Recommendations and preferences are backed by Supabase; only approved
+members can discover. The mobile "Active this week" toggle filters using dashboard activity recorded in the last seven days.
 
 | Part | What works today | Backend to do |
 |---|---|---|
 | Header | Nav links, active state, avatar initial from the session. The bell does nothing. "Discover/Matches/Messages/Profile" open "Coming soon" pages. | Unread-notification flag; real pages. |
-| Filters | Show me / looking for / three sliders / ID-verified toggle all work. The slider labels follow the sliders ("27 – 36", "Within 50km", "80+"). "Apply filters" filters the deck; "Reset" restores the defaults. | Persist and load saved filters; do the filtering server-side. Rules and slider ranges are in `src/lib/discover.ts`. |
-| Profile card | Like / pass / undo / save work on a **demo deck of 11 profiles** (`PROFILES` in `discover.ts`); only the first has a real photo — the others show an initial on a gold tile. When the deck or the day's introductions run out, a message replaces the card. | Fetch the next profile; record like / pass / save; photos (the photo-progress segments are static). |
-| Introductions | The count goes up on every like/pass and back down on undo; 15 per day; "Resets in Nh" counts hours to local midnight. Starts at 8 of 15 as in the design. | Real used/total and reset time from the server. |
+| Filters | Show me / looking for / three sliders / ID-verified toggle and active-this-week filter run server-side; preferences persist in the member's row. City distance is calculated between approximate city centers. Rules and slider mappings are in `src/lib/discover.ts` and migration `202611020005_dashboard_matching.sql`. | Expand the admin-maintained city directory as launch regions are added. |
+| Profile card | Recommendations come from completed member profiles; signed photo URLs are available only for approved photos. Like / pass / undo / save actions persist in Supabase and are scoped to the signed-in member. | Mutual-match behavior, saved-profile browsing, and complete profile photo galleries are not implemented. |
+| Introductions | The server enforces a limit of 15 recorded likes/passes per member per day, using the member's local timezone; undo removes the latest same-day action. The count no longer starts from demo data. | |
 | Quick preferences | Shows the applied filters; the "Verified only" toggle changes the filter immediately. | |
 | Safety note | "Visit Safety Center" opens `/safety` ("Coming soon"). | |
 

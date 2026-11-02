@@ -1,9 +1,16 @@
 import { Link } from 'react-router-dom'
 
-type Props = { step: number; total: number; label: string }
+type Props = {
+  step: number
+  total: number
+  label: string
+  onSaveExit?: () => void
+  saving?: boolean
+  disabled?: boolean
+}
 
 // Two-row onboarding header: brand row on top, "Step n of N" progress row beneath.
-export function StepHeader({ step, total, label }: Props) {
+export function StepHeader({ step, total, label, onSaveExit, saving = false, disabled = false }: Props) {
   return (
     <header className="border-b border-[#e4dcd1] bg-ink">
       <div className="border-b border-[#393631]">
@@ -12,7 +19,13 @@ export function StepHeader({ step, total, label }: Props) {
             <img src="/images/logo-icon.png" alt="" className="h-[33px] w-[45px]" />
             TrueConnect
           </Link>
-          <Link to="/" className="text-[14px] text-[#b7af9c]">Save &amp; exit</Link>
+          {onSaveExit ? (
+            <button type="button" onClick={onSaveExit} disabled={saving || disabled} className="text-[14px] text-[#b7af9c] disabled:opacity-70">
+              {saving ? 'Saving…' : 'Save & exit'}
+            </button>
+          ) : (
+            <Link to="/" className="text-[14px] text-[#b7af9c]">Save &amp; exit</Link>
+          )}
         </div>
       </div>
       <div className="flex h-[46px] items-center justify-between px-4 md:justify-center md:px-6">

@@ -1,13 +1,20 @@
-import { useState, type ReactNode } from 'react'
+import { useEffect, useState, type ReactNode } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { ChevronLeft, Lock } from 'lucide-react'
 import { StepHeader } from '../components/onboarding/StepHeader'
-import { completeStep } from '../lib/onboarding'
+import {
+  ApiError,
+  getOnboardingCompatibilityDraft,
+  saveOnboardingCompatibility,
+  saveOnboardingCompatibilityDraft,
+  type OnboardingCompatibilityDraft,
+} from '../lib/api'
 
 type Layout = 'stack' | 'row'
 
-const questions: { title: string; options: string[]; cols: string; layout: Layout; first?: boolean }[] = [
+const questions: { key: string; title: string; options: string[]; cols: string; layout: Layout; first?: boolean }[] = [
   {
+    key: 'faith',
     title: 'How big a role does faith play in your day-to-day life?',
     options: ['Not really', 'Somewhat', 'Very important', 'Central to who I am'],
     cols: 'grid-cols-3 gap-2 md:grid-cols-4',
@@ -15,18 +22,21 @@ const questions: { title: string; options: string[]; cols: string; layout: Layou
     first: true,
   },
   {
+    key: 'family_involvement',
     title: 'How involved is your family in your major life decisions?',
     options: ['Not very involved', 'Somewhat involved', 'Very involved', 'Central to who I am'],
     cols: 'grid-cols-1 gap-[10px] md:grid-cols-2',
     layout: 'row',
   },
   {
+    key: 'conflict_approach',
     title: "When you disagree with someone you're close to, what's your instinct?",
     options: ['I need space before I talk it out', 'I want to resolve it right away', 'Depends entirely on the day', 'I usually let it go'],
     cols: 'grid-cols-1 gap-[10px] md:grid-cols-2',
     layout: 'row',
   },
   {
+    key: 'relocation',
     title: 'Would you relocate for the right relationship?',
     options: ['No', 'Yes, absolutely', 'Very important'],
     cols: 'grid-cols-3 gap-2',
@@ -93,19 +103,75 @@ export function OnboardingQuestions() {
   const navigate = useNavigate()
   const [answers, setAnswers] = useState([1, 1, 0, 1])
   const [love, setLove] = useState<number[]>([0])
+  const [notes, setNotes] = useState('')
+  const [pending, setPending] = useState(false)
+  const [loadingDraft, setLoadingDraft] = useState(true)
+  const [error, setError] = useState('')
+
+  useEffect(() => {
+    let active = true
+    getOnboardingCompatibilityDraft()
+      .then((draft) => {
+        if (!active || !draft) return
+        setAnswers(questions.map((question, index) => {
+          const selected = question.options.indexOf(draft.answers[question.key])
+          return selected >= 0 ? selected : [1, 1, 0, 1][index]
+        }))
+        setLove(draft.loveLanguages
+          .map((language) => loveLanguages.indexOf(language))
+          .filter((index) => index >= 0)
+          .slice(0, MAX_LOVE))
+        setNotes(draft.notes)
+      })
+      .catch((err) => {
+        if (active) setError(err instanceof ApiError ? err.message : 'Could not load your saved answers.')
+      })
+      .finally(() => { if (active) setLoadingDraft(false) })
+    return () => { active = false }
+  }, [])
 
   const toggleLove = (i: number) =>
     setLove((cur) => (cur.includes(i) ? cur.filter((x) => x !== i) : cur.length < MAX_LOVE ? [...cur, i] : cur))
 
+  const currentAnswers = (): OnboardingCompatibilityDraft => ({
+    answers: Object.fromEntries(questions.map((question, index) => [
+      question.key,
+      question.options[answers[index]],
+    ])),
+    loveLanguages: love.map((index) => loveLanguages[index]),
+    notes,
+  })
+
+  async function saveDraftAndExit() {
+    setPending(true)
+    setError('')
+    try {
+      await saveOnboardingCompatibilityDraft(currentAnswers())
+      navigate('/')
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'Could not save your answers. Please try again.')
+    } finally {
+      setPending(false)
+    }
+  }
+
   return (
     <div className="min-h-screen bg-cream">
-      <StepHeader step={2} total={3} label="Setting up your profile" />
+      <StepHeader step={2} total={3} label="Setting up your profile" onSaveExit={() => void saveDraftAndExit()} saving={pending} disabled={loadingDraft} />
 
       <form
-        onSubmit={(e) => {
+        onSubmit={async (e) => {
           e.preventDefault()
-          completeStep('questions')
-          navigate('/onboarding/identity')
+          setPending(true)
+          setError('')
+          try {
+            await saveOnboardingCompatibility(currentAnswers())
+            navigate('/onboarding/identity')
+          } catch (err) {
+            setError(err instanceof ApiError ? err.message : 'Something went wrong while saving your answers. Please try again.')
+          } finally {
+            setPending(false)
+          }
         }}
         className="mx-auto w-full max-w-[666px] px-4 pb-10 pt-9 md:px-0 md:pb-[88px] md:pt-[72px]"
       >
@@ -168,15 +234,20 @@ export function OnboardingQuestions() {
         <QuestionBlock caption="Optional" title="Anything else that would help us understand you better?">
           <textarea
             name="notes"
+            value={notes}
+            onChange={(event) => setNotes(event.target.value)}
             placeholder="Share anything that matters to you that the questions above didn't quite cover."
             className="block h-[123px] w-full resize-none rounded-lg border border-[#e4dcd1] bg-cream px-[17px] py-[17px] text-[16px] leading-6 text-[#5c5748] outline-none placeholder:text-[#b7af9c] focus:border-gold"
           />
         </QuestionBlock>
 
         <div className="mt-[55px] flex flex-col-reverse items-center gap-[17px] border-t border-[#e4dcd1] pt-[19px] md:flex-row md:justify-between md:pt-4">
-          <Link to="/" className="text-[14px] text-[#5c5748]">Save &amp; continue later</Link>
-          <button type="submit" className="flex h-[38px] items-center rounded-md bg-gold px-4 text-[14px] font-medium text-ink">
-            Continue to identity verification
+          <button type="button" onClick={() => void saveDraftAndExit()} disabled={pending || loadingDraft} className="text-[14px] text-[#5c5748] disabled:opacity-70">
+            Save &amp; continue later
+          </button>
+          {error && <p role="alert" className="text-[14px] text-[#ff383c]">{error}</p>}
+          <button type="submit" disabled={pending || loadingDraft} className="flex h-[38px] items-center rounded-md bg-gold px-4 text-[14px] font-medium text-ink disabled:opacity-70">
+            {loadingDraft ? 'Loading…' : pending ? 'Saving…' : 'Continue to identity verification'}
           </button>
         </div>
       </form>
