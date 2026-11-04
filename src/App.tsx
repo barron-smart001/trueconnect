@@ -20,24 +20,10 @@ const OnboardingProfile = lazy(() => import('./pages/OnboardingProfile').then((m
 const OnboardingQuestions = lazy(() => import('./pages/OnboardingQuestions').then((m) => ({ default: m.OnboardingQuestions })))
 const OnboardingIdentity = lazy(() => import('./pages/OnboardingIdentity').then((m) => ({ default: m.OnboardingIdentity })))
 const OnboardingComplete = lazy(() => import('./pages/OnboardingComplete').then((m) => ({ default: m.OnboardingComplete })))
-const ComingSoon = lazy(() => import('./pages/Placeholder').then((m) => ({ default: m.ComingSoon })))
+const InfoPage = lazy(() => import('./pages/Info').then((m) => ({ default: m.InfoPage })))
 const NotFound = lazy(() => import('./pages/Placeholder').then((m) => ({ default: m.NotFound })))
 
-// Pages that are linked from the UI but not designed yet (see pages/Placeholder.tsx).
-const marketing: [string, string][] = [
-  ['/membership', 'Membership'],
-  ['/about', 'About TrueConnect'],
-  ['/careers', 'Careers'],
-  ['/press', 'Press'],
-  ['/safety', 'Safety Center'],
-  ['/help', 'Help Center'],
-  ['/guidelines', 'Community Guidelines'],
-  ['/privacy', 'Privacy Policy'],
-  ['/terms', 'Terms of Service'],
-  ['/cookies', 'Cookie Policy'],
-  ['/ambassador', 'Ambassador program'],
-  ['/invite', 'Invite a friend'],
-]
+const infoPaths = ['/membership', '/about', '/careers', '/press', '/safety', '/help', '/guidelines', '/privacy', '/terms', '/cookies', '/ambassador', '/invite']
 
 // Signed-in pages. The database enforces access with row-level security; this guard only improves the experience.
 function guarded(element: ReactNode) {
@@ -68,8 +54,8 @@ function App() {
           <Route path="/onboarding/questions" element={guarded(<OnboardingQuestions />)} />
           <Route path="/onboarding/identity" element={guarded(<OnboardingIdentity />)} />
           <Route path="/onboarding/complete" element={guarded(<OnboardingComplete />)} />
-          {marketing.map(([path, title]) => (
-            <Route key={path} path={path} element={<ComingSoon title={title} />} />
+          {infoPaths.map((path) => (
+            <Route key={path} path={path} element={<InfoPage path={path} />} />
           ))}
           <Route path="*" element={<NotFound />} />
         </Routes>

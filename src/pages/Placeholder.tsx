@@ -1,11 +1,6 @@
-import { useEffect } from 'react'
 import { Link } from 'react-router-dom'
-import { DashboardHeader } from '../components/dashboard/DashboardHeader'
 import { Footer } from '../components/Footer'
 import { Header } from '../components/Header'
-
-// These pages have no Figma frame yet. They exist so every link in the app lands somewhere sensible
-// instead of a blank screen; replace each one when its design arrives.
 
 type Props = { eyebrow: string; title: string; body: string; cta: { label: string; to: string } }
 
@@ -19,26 +14,6 @@ function Message({ eyebrow, title, body, cta }: Props) {
         {cta.label}
       </Link>
     </main>
-  )
-}
-
-/** A page that has not been designed yet. `app` pages sit inside the signed-in header, the rest inside the marketing one. */
-export function ComingSoon({ title, app = false }: { title: string; app?: boolean }) {
-  useEffect(() => {
-    document.title = `${title} · TrueConnect`
-  }, [title])
-
-  return (
-    <div className={`min-h-screen bg-cream ${app ? 'pb-[71px] md:pb-0' : ''}`}>
-      {app ? <DashboardHeader /> : <div className="bg-ink"><Header /></div>}
-      <Message
-        eyebrow="Coming soon"
-        title={title}
-        body="We're still putting this page together. Check back shortly."
-        cta={app ? { label: 'Back to home', to: '/dashboard' } : { label: 'Back to the homepage', to: '/' }}
-      />
-      {!app && <Footer />}
-    </div>
   )
 }
 
