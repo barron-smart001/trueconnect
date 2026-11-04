@@ -1,6 +1,8 @@
 import { Check, Lock } from 'lucide-react'
+import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { OnboardingHeader } from '../components/onboarding/OnboardingHeader'
+import { getOnboardingSummary } from '../lib/api'
 import { firstName, useUser } from '../lib/session'
 
 // Same faint diagonal lines and gold glow as the homepage hero (the lines are tablet and up; mobile has only a smaller glow).
@@ -51,6 +53,12 @@ function StatusCard({ icon, title, body, pill, className = '' }: { icon: string;
 
 export function OnboardingComplete() {
   const name = firstName(useUser())
+  const [nearby, setNearby] = useState<number | null>(null)
+  useEffect(() => {
+    let active = true
+    getOnboardingSummary().then((summary) => active && setNearby(summary.nearbyCount), () => {})
+    return () => { active = false }
+  }, [])
   return (
     <div className="min-h-screen bg-cream">
       <OnboardingHeader progress={false} action={{ label: 'Go to dashboard', mobileLabel: 'Save & exit', to: '/dashboard' }} />
@@ -119,7 +127,7 @@ export function OnboardingComplete() {
               <span className="flex size-11 items-center justify-center rounded-full bg-ink text-gold">
                 <Lock size={16} strokeWidth={1.5} aria-hidden />
               </span>
-              <p className="mt-[9px] font-serif text-[16px] font-semibold leading-6 text-ink">3 potential matches found nearby</p>
+              <p className="mt-[9px] font-serif text-[16px] font-semibold leading-6 text-ink">{nearby === null ? 'Potential matches nearby' : nearby === 0 ? 'Matches are on the way' : `${nearby} potential ${nearby === 1 ? 'match' : 'matches'} found nearby`}</p>
               <p className="mt-1 max-w-[250px] text-[14px] leading-[22px] text-[#5c5748]">
                 They&apos;ll unlock as soon as your identity verification is approved.
               </p>

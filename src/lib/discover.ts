@@ -60,8 +60,6 @@ export type Profile = {
   photo?: string
 }
 
-export const DAILY_INTRODUCTIONS = 15
-
 /** Whole hours until local midnight, when the daily introductions reset. */
 export function hoursUntilReset(now = new Date()): number {
   const midnight = new Date(now)

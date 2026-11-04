@@ -12,7 +12,7 @@ import {
   undoLastDiscoverAction,
   type DashboardData,
 } from '../lib/api'
-import { DAILY_INTRODUCTIONS, DEFAULT_FILTERS, hoursUntilReset, type Filters } from '../lib/discover'
+import { DEFAULT_FILTERS, hoursUntilReset, type Filters } from '../lib/discover'
 
 export function Dashboard() {
   const [dashboard, setDashboard] = useState<DashboardData | null>(null)
@@ -59,7 +59,7 @@ export function Dashboard() {
 
   const profile = dashboard?.profiles[0] ?? null
   const used = dashboard?.used ?? 0
-  const total = dashboard?.total ?? DAILY_INTRODUCTIONS
+  const total = dashboard?.total ?? 0
 
   async function applyFilters(filters: Filters) {
     setPendingAction(true)
@@ -83,7 +83,7 @@ export function Dashboard() {
     setError('')
     try {
       await recordDiscoverAction(profile.id, action)
-      const result = await loadDashboard(applied)
+      const result = await loadDashboard(applied, false)
       setDashboard(result)
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Could not save your response. Please try again.')
@@ -97,7 +97,7 @@ export function Dashboard() {
     setError('')
     try {
       await undoLastDiscoverAction()
-      const result = await loadDashboard(applied)
+      const result = await loadDashboard(applied, false)
       setDashboard(result)
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Could not undo that response. Please try again.')
@@ -112,7 +112,7 @@ export function Dashboard() {
     setError('')
     try {
       await toggleSavedProfile(profile.id)
-      const result = await loadDashboard(applied)
+      const result = await loadDashboard(applied, false)
       setDashboard(result)
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Could not update your saved profiles. Please try again.')

@@ -1,5 +1,5 @@
 import { useState, type FormEvent } from 'react'
-import { Link, useNavigate } from 'react-router-dom'
+import { Link, useLocation, useNavigate } from 'react-router-dom'
 import {
   AuthHeading,
   AuthLayout,
@@ -10,7 +10,7 @@ import {
   labelClass,
 } from '../components/auth/parts'
 import { ApiError, signIn, signInWithOAuth, type OAuthProvider } from '../lib/api'
-import { setUser } from '../lib/session'
+import { safeNext, setUser } from '../lib/session'
 import { isEmail } from '../lib/validation'
 
 type Errors = { email?: string; password?: string; form?: string }
@@ -23,6 +23,7 @@ const initialErrors = (): Errors =>
 
 export function SignIn() {
   const navigate = useNavigate()
+  const { search } = useLocation()
   const [errors, setErrors] = useState<Errors>(initialErrors)
   const [pending, setPending] = useState(false)
   const [pendingProvider, setPendingProvider] = useState<OAuthProvider | null>(null)
@@ -58,7 +59,7 @@ export function SignIn() {
     setPending(true)
     try {
       setUser(await signIn(email, password))
-      navigate('/dashboard')
+      navigate(safeNext(search), { replace: true })
     } catch (err) {
       const api = err instanceof ApiError ? err : new ApiError('Something went wrong. Please try again.')
       setErrors(api.field === 'email' || api.field === 'password' ? { [api.field]: api.message } : { form: api.message })

@@ -37,7 +37,8 @@ redirect URLs, including `http://localhost:5173/auth/callback` for local develop
 dashboard. Apple may only provide a user's name on their first authorization, so the app falls back to the email name
 when the provider does not return it later.
 
-Run the SQL files in `supabase/migrations/` in filename order in the Supabase project's SQL Editor. They create the
+Run the SQL files in `supabase/migrations/` in filename order (the latest, `202611030001_matches_messaging_safety.sql`, adds
+mutual matches, messages, notifications, block/report, contact messages and discovery pause) in the Supabase project's SQL Editor. They create the
 newsletter subscriber table, private onboarding tables, private member photo storage and identity status, plus the
 private onboarding-drafts table, city directory, discovery preferences, and server-side matching/action functions with
 row-level security.
@@ -64,6 +65,7 @@ supabase db push
 supabase secrets set PERSONA_API_KEY="<persona-api-key>" PERSONA_INQUIRY_TEMPLATE_ID="<template-id>" PERSONA_WEBHOOK_SECRET="<webhook-secret>"
 supabase functions deploy persona-create-inquiry
 supabase functions deploy persona-webhook
+supabase functions deploy delete-account
 ```
 
 Replace the quoted placeholders with secrets from Persona. Do not commit credentials or put them in frontend environment
@@ -89,12 +91,18 @@ variables.
 | `/onboarding/identity` | Step 3 of 3 — Identity verification | `src/pages/OnboardingIdentity.tsx` |
 | `/onboarding/complete` | "You're all set" (profile complete, ID under review) | `src/pages/OnboardingComplete.tsx` |
 | `/dashboard` | Signed-in Home: filters, suggested profile, introductions counter, quick preferences (**tablet layout only so far**) | `src/pages/Dashboard.tsx`, `src/components/dashboard/` |
-| `/discover` `/matches` `/messages` `/profile` | "Coming soon" (no designs yet), inside the signed-in header | `src/pages/Placeholder.tsx` |
-| `/membership` `/about` `/careers` `/press` `/contact` `/safety` `/help` `/guidelines` `/privacy` `/terms` `/cookies` `/ambassador` `/invite` | "Coming soon" (no designs yet), inside the marketing header and footer | `src/pages/Placeholder.tsx` |
+| `/discover` | Same as `/dashboard` | `src/pages/Dashboard.tsx` |
+| `/matches` | Mutual matches and saved profiles (functional UI, no Figma frame yet) | `src/pages/Matches.tsx` |
+| `/messages`, `/messages/:matchId` | Realtime one-to-one messaging with block / report / unmatch | `src/pages/Messages.tsx` |
+| `/profile` | Own profile preview, verification status, pause visibility, sign out, delete account | `src/pages/Profile.tsx` |
+| `/contact` | Contact form (rate-limited, stored for the support team) | `src/pages/Contact.tsx` |
+| `/membership` `/about` `/careers` `/press` `/safety` `/help` `/guidelines` `/privacy` `/terms` `/cookies` `/ambassador` `/invite` | "Coming soon" (no designs yet), inside the marketing header and footer | `src/pages/Placeholder.tsx` |
 | anything else | 404 | `src/pages/Placeholder.tsx` |
 
-Routes are declared in `src/App.tsx`. There is **no auth guard**: any visitor can open `/dashboard`. The client-side
-user state in `useUser()` is for UI only and is not an authorization boundary.
+Routes are declared in `src/App.tsx`. Signed-in routes are wrapped in `RequireAuth`, which follows the Supabase session
+(`useAuthStatus()` in `src/lib/session.ts`) and redirects signed-out visitors to `/signin?next=<path>`. This guard is a
+usability feature only: every table and function is protected by row-level security in the database, which is the real
+authorization boundary. All pages except the homepage and the sign-in/sign-up forms are code-split.
 
 The "Coming soon" and 404 pages are **not from Figma** — they exist so no link in the app dead-ends. Replace each page
 when its design arrives (delete its entry from the two lists in `App.tsx`).
@@ -169,6 +177,15 @@ To report a failure, throw `new ApiError(message, field)`: the page shows `messa
 | `recordDiscoverAction(profileId, action)` | Dashboard | Records a like or pass, enforces the daily introduction limit, and excludes that profile from subsequent recommendations. |
 | `undoLastDiscoverAction()` | Dashboard | Removes the latest same-day like/pass and restores that profile to the recommendation deck. |
 | `toggleSavedProfile(profileId)` | Dashboard | Adds or removes a profile from the member's private saved list. |
+| `signOut()` / `deleteAccount()` | Profile | Ends the session; the `delete-account` Edge Function removes the member's photos and auth user, and database cascades remove everything else. |
+| `listConversations()` / `getSavedProfiles()` | Matches, Messages | Active matches with last message and unread count; saved profiles (blocked members excluded). |
+| `listMessages(matchId, beforeId?)` / `sendMessage` / `markConversationRead` | Messages | Cursor-paginated history (40 per page); sends are validated and limited to 30 per minute per member in the database. |
+| `subscribeToMessages` / `subscribeToIncomingMessages` / `subscribeToNotifications` | Messages, header | Supabase Realtime `postgres_changes`; row-level security restricts events to the member's own matches and notifications. |
+| `listNotifications()` / `markNotificationsRead()` | Header bell | New-match and verification-result notifications created by database triggers. |
+| `unmatch(matchId)` / `blockMember(id)` / `reportMember(id, reason, details)` | Messages | Block hides both members from each other everywhere and closes the match; reports are stored for review (10 per member per day). |
+| `getMyProfile()` / `setDiscoveryPaused(paused)` | Profile | Reads the member's own profile; pausing removes them from other members' discovery. |
+| `getOnboardingSummary()` | Onboarding | The member's saved city and how many verified members share their city and intent. |
+| `submitContactMessage(...)` | Contact | Validated and limited to 3 messages per email per hour by the database. |
 | `subscribeNewsletter(email)` | Footer "Stay in the loop" | Adds a normalized email to `newsletter_subscribers`; duplicate subscriptions are treated as success. |
 
 ### What already works (no backend needed)
@@ -210,9 +227,9 @@ members can discover. The mobile "Active this week" toggle filters using dashboa
 
 | Part | What works today | Backend to do |
 |---|---|---|
-| Header | Nav links, active state, avatar initial from the session. The bell does nothing. "Discover/Matches/Messages/Profile" open "Coming soon" pages. | Unread-notification flag; real pages. |
+| Header | Nav links, active state, avatar initial, live notification bell and unread-message badge. | |
 | Filters | Show me / looking for / three sliders / ID-verified toggle and active-this-week filter run server-side; preferences persist in the member's row. City distance is calculated between approximate city centers. Rules and slider mappings are in `src/lib/discover.ts` and migration `202611020005_dashboard_matching.sql`. | Expand the admin-maintained city directory as launch regions are added. |
-| Profile card | Recommendations come from completed member profiles; signed photo URLs are available only for approved photos. Like / pass / undo / save actions persist in Supabase and are scoped to the signed-in member. | Mutual-match behavior, saved-profile browsing, and complete profile photo galleries are not implemented. |
+| Profile card | Recommendations come from completed member profiles; signed photo URLs are available only for approved photos. Like / pass / undo / save actions persist in Supabase and are scoped to the signed-in member. A like the other member already made creates a match (database trigger) and a notification; matched likes cannot be undone. Blocked, paused and unmatched members never appear. | Complete profile photo galleries are not implemented. |
 | Introductions | The server enforces a limit of 15 recorded likes/passes per member per day, using the member's local timezone; undo removes the latest same-day action. The count no longer starts from demo data. | |
 | Quick preferences | Shows the applied filters; the "Verified only" toggle changes the filter immediately. | |
 | Safety note | "Visit Safety Center" opens `/safety` ("Coming soon"). | |
@@ -226,7 +243,7 @@ members can discover. The mobile "Active this week" toggle filters using dashboa
 - **Homepage:** all copy is static. Reviews, stats ("1,200+ verified reviews", "4.9") and cities are hardcoded.
 - **Consent checkboxes** (sign up, identity verification) start **unchecked**, although the Figma frames show them
   checked. They are legal confirmations, so pre-ticking is not recommended.
-- **Google / Apple buttons** do nothing yet (OAuth). The social icons in the footer have no URLs.
+- **Google / Apple buttons** need the OAuth providers enabled in Supabase (see section 1). The social icons in the footer have no URLs.
 
 ### Dev-only preview shortcuts (remove or keep out of production)
 
@@ -235,7 +252,7 @@ members can discover. The mobile "Active this week" toggle filters using dashboa
 | `/signin?error` | Sign-in error state (dev server only) |
 | `/forgot-password?sent` | "Request Successful" toast (dev server only) |
 | `/update-password?updated` | "Password Updated" toast, then redirect (dev server only) |
-| `/onboarding?location` | Location modal (**works in production too** — remove once the real trigger exists) |
+| `/onboarding?location` | Location modal (dev server only) |
 | `/?menu` | The small-screen menu, open (dev server only) |
 
 To reset the demo state, clear `tc.user` and `tc.onboarding` from the browser's local storage.
@@ -263,4 +280,42 @@ names) before launch.
   mobile (375px) for all of those too. Widths between the design widths (for example 800px or 1100px) are not designed: the layout clips instead of
   scrolling sideways.
 - The dashboard has no desktop frame. The "Coming soon" and 404 pages have no design.
-- No automated tests are committed. The behaviour above was checked with a one-off browser script, not kept in the repo.
+- No automated tests are committed. See the production checklist for what to exercise against staging.
+
+## 9. Production checklist
+
+**Database and scale**
+- Apply every migration in order, then `supabase functions deploy` for all three functions and set the secrets above.
+- Add launch cities to `supported_cities`; there is no admin UI. Reports (`member_reports`) and contact messages
+  (`contact_messages`) are readable only with the service role: review them in the Supabase dashboard or a service-role tool.
+- Hot paths are indexed (`messages (match_id, id desc)`, partial unread indexes, `matches` per member, notifications per
+  member). Message history is cursor-paginated and conversation lists are capped at 200. Discovery returns at most 50
+  profiles per call; candidates are pruned by a latitude bounding box and an indexed `birth_date` age window
+  (`202611030002_scale_indexes.sql`). If discovery grows beyond a few hundred thousand members, add a PostGIS index and
+  precomputed ranking instead of ranking in the function.
+- Schedule `select public.prune_history();` daily (Supabase dashboard -> Integrations -> Cron) to keep impressions and
+  notifications bounded.
+- Operational limits (daily introductions, messages per minute, reports per day, contact messages per hour) live in the
+  `app_settings` table (`202611030003_app_settings.sql`); change them with an `update`, not a deploy.
+- Messages carry a `recipient_id`, and the app's Realtime inbox subscription filters on it, so Realtime work stays per member.
+- CI (`.github/workflows/ci.yml`) runs lint and the type-checked build on every push and pull request.
+- `scripts/e2e-connect.mjs` is the regression check for the whole match-and-message journey; run it after every migration.
+- Realtime events are filtered by row-level security; keep message bodies out of notification payloads.
+- Run the Supabase Database Advisor (security + performance) after applying the migrations.
+
+**Auth and abuse**
+- In Supabase Authentication, enable email confirmation, set the Site URL and redirect URLs for the production origin,
+  turn on leaked-password protection, raise the minimum password length, and enable CAPTCHA (Turnstile/hCaptcha). The
+  public `submit_contact_message` and newsletter endpoints can only be rate-limited per email without it.
+- Set Supabase rate limits for sign-ins, sign-ups and email sends to values suitable for launch traffic.
+
+**Hosting**
+- `vercel.json` sets the SPA rewrite, security headers (CSP, HSTS, frame denial) and long-lived caching for hashed assets.
+  If you add analytics, error tracking or another third-party origin, extend the CSP `script-src` / `connect-src`.
+- Set `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY` in the hosting environment. Never expose the service-role key.
+- Persona: switch from Sandbox to production credentials, template and webhook secret.
+
+**Not yet verified**
+- The SQL in `202611030001_matches_messaging_safety.sql` has not been executed against a database. Apply it to a staging
+  project first and exercise: mutual like -> match + notifications, messaging between two accounts, block/report, pause,
+  account deletion, and the contact form.

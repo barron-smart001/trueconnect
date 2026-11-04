@@ -13,7 +13,7 @@ export function IntroductionsCard({ used, total, hoursLeft }: { used: number; to
       <div className="mt-[10px] h-2 rounded-full bg-[#eee5d2]">
         <div
           className="h-full rounded-full bg-[linear-gradient(90deg,#8b6b1f,#c9a239)]"
-          style={{ width: `${(used / total) * 100}%` }}
+          style={{ width: `${total ? (used / total) * 100 : 0}%` }}
           role="progressbar"
           aria-label="Introductions used today"
           aria-valuenow={used}

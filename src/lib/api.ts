@@ -33,7 +33,7 @@ function supabaseClient() {
   }
 }
 
-function toUser(authUser: SupabaseUser, fallbackEmail = ''): User {
+export function toUser(authUser: SupabaseUser, fallbackEmail = ''): User {
   const email = authUser.email ?? fallbackEmail
   const metadataName = authUser.user_metadata.name
     ?? authUser.user_metadata.full_name
@@ -42,7 +42,7 @@ function toUser(authUser: SupabaseUser, fallbackEmail = ''): User {
       .join(' ')
   const name = typeof metadataName === 'string' && metadataName.trim()
     ? metadataName.trim()
-    : email.split('@')[0] || 'Amara'
+    : email.split('@')[0]
   return { name, email }
 }
 
@@ -524,7 +524,7 @@ export type DashboardData = {
 }
 
 /** Load saved filters, server-ranked profiles, introduction usage, and saved profile IDs. */
-export async function loadDashboard(filtersOverride?: Filters): Promise<DashboardData> {
+export async function loadDashboard(filtersOverride?: Filters, persist = filtersOverride !== undefined): Promise<DashboardData> {
   const client = supabaseClient()
   const userId = await authenticatedUserId()
   let filters = filtersOverride ?? DEFAULT_FILTERS
@@ -540,7 +540,8 @@ export async function loadDashboard(filtersOverride?: Filters): Promise<Dashboar
   }
 
   const [minAge, maxAge] = ageRange(filters.age)
-  const { error: saveFiltersError } = await client.from('member_discover_preferences').upsert({
+  // Only write preferences when the member changed them; plain reloads (after like / pass / undo) pass persist = false.
+  const { error: saveFiltersError } = !persist ? { error: null } : await client.from('member_discover_preferences').upsert({
     user_id: userId,
     show_me: filters.show,
     looking_for: filters.looking,
@@ -573,9 +574,11 @@ export async function loadDashboard(filtersOverride?: Filters): Promise<Dashboar
   if (stateResult.error) throw new ApiError(stateResult.error.message)
 
   const rows = profilesResult.data as DiscoverRow[]
-  const profiles = await Promise.all(rows.map(async ({ photo_paths: photoPaths, ...profile }) => {
+  // The dashboard shows one profile at a time, so sign only the next few photos instead of all 50.
+  const SIGNED_AHEAD = 3
+  const profiles = await Promise.all(rows.map(async ({ photo_paths: photoPaths, ...profile }, index) => {
     let photo: string | undefined
-    if (profile.verified && photoPaths.length > 0) {
+    if (index < SIGNED_AHEAD && profile.verified && photoPaths.length > 0) {
       const { data, error } = await client.storage
         .from('member-profile-photos')
         .createSignedUrl(photoPaths[0], 60 * 60)
@@ -617,4 +620,370 @@ export async function undoLastDiscoverAction(): Promise<void> {
 export async function toggleSavedProfile(profileId: string): Promise<void> {
   const { error } = await supabaseClient().rpc('toggle_saved_profile', { p_profile_id: profileId })
   if (error) throw new ApiError(error.message)
+}
+
+// ---------------------------------------------------------------------------
+// Session, account, matches, messaging, notifications and safety
+// ---------------------------------------------------------------------------
+
+/** End the Supabase session on this device. */
+export async function signOut(): Promise<void> {
+  const { error } = await supabaseClient().auth.signOut()
+  if (error) throw new ApiError(error.message)
+}
+
+/** Permanently delete the signed-in member's account, photos and all related data. */
+export async function deleteAccount(): Promise<void> {
+  await authenticatedUserId()
+  const { data, error } = await supabaseClient().functions.invoke<{ deleted?: boolean; error?: string }>('delete-account')
+  if (error) throw new ApiError('We could not delete your account. Please try again or contact support.')
+  if (!data?.deleted) throw new ApiError(data?.error ?? 'We could not delete your account. Please try again.')
+  await supabaseClient().auth.signOut({ scope: 'local' })
+}
+
+export type ContactTopic = 'support' | 'safety' | 'press' | 'partnerships' | 'other'
+
+/** Send a message to the TrueConnect team. Rate-limited per email by the database. */
+export async function submitContactMessage(input: {
+  name: string
+  email: string
+  topic: ContactTopic
+  message: string
+}): Promise<void> {
+  const { error } = await supabaseClient().rpc('submit_contact_message', {
+    p_name: input.name,
+    p_email: input.email,
+    p_topic: input.topic,
+    p_message: input.message,
+  })
+  if (error) throw new ApiError(error.message)
+}
+
+export type OnboardingSummary = { location: string | null; nearbyCount: number }
+
+/** The member's saved city and how many verified members share their city and intent. */
+export async function getOnboardingSummary(): Promise<OnboardingSummary> {
+  const { data, error } = await supabaseClient().rpc('get_onboarding_summary')
+  if (error) throw new ApiError(error.message)
+  const row = (data as { location: string; nearby_count: number }[] | null)?.[0]
+  return { location: row?.location ?? null, nearbyCount: row?.nearby_count ?? 0 }
+}
+
+export type MemberSummary = {
+  profileId: string
+  name: string
+  age: number
+  location: string
+  intent: string
+  verified: boolean
+  photo?: string
+}
+
+export type Conversation = MemberSummary & {
+  matchId: string
+  matchedAt: string
+  lastMessage: string | null
+  lastMessageAt: string | null
+  lastSenderId: string | null
+  unreadCount: number
+}
+
+export type SavedProfile = MemberSummary & { savedAt: string }
+
+async function signFirstPhoto(paths: string[]): Promise<string | undefined> {
+  if (!paths.length) return undefined
+  const { data, error } = await supabaseClient().storage
+    .from('member-profile-photos')
+    .createSignedUrl(paths[0], 60 * 60)
+  // A photo that cannot be signed should not break the whole list; show the initial tile instead.
+  return error ? undefined : data.signedUrl
+}
+
+type ConversationRow = {
+  match_id: string
+  profile_id: string
+  name: string
+  age: number
+  location: string
+  intent: string
+  verified: boolean
+  photo_paths: string[]
+  matched_at: string
+  last_message: string | null
+  last_message_at: string | null
+  last_sender_id: string | null
+  unread_count: number
+}
+
+/** Active matches, newest activity first, with unread counts. */
+export async function listConversations(): Promise<Conversation[]> {
+  const { data, error } = await supabaseClient().rpc('list_conversations')
+  if (error) throw new ApiError(error.message)
+  return Promise.all((data as ConversationRow[]).map(async (row) => ({
+    matchId: row.match_id,
+    profileId: row.profile_id,
+    name: row.name,
+    age: row.age,
+    location: row.location,
+    intent: row.intent,
+    verified: row.verified,
+    photo: await signFirstPhoto(row.photo_paths),
+    matchedAt: row.matched_at,
+    lastMessage: row.last_message,
+    lastMessageAt: row.last_message_at,
+    lastSenderId: row.last_sender_id,
+    unreadCount: row.unread_count,
+  })))
+}
+
+type SavedRow = Omit<ConversationRow, 'match_id' | 'matched_at' | 'last_message' | 'last_message_at' | 'last_sender_id' | 'unread_count'> & {
+  saved_at: string
+}
+
+/** Profiles the member has saved from discovery. */
+export async function getSavedProfiles(): Promise<SavedProfile[]> {
+  const { data, error } = await supabaseClient().rpc('get_saved_profiles')
+  if (error) throw new ApiError(error.message)
+  return Promise.all((data as SavedRow[]).map(async (row) => ({
+    profileId: row.profile_id,
+    name: row.name,
+    age: row.age,
+    location: row.location,
+    intent: row.intent,
+    verified: row.verified,
+    photo: await signFirstPhoto(row.photo_paths),
+    savedAt: row.saved_at,
+  })))
+}
+
+export type Message = { id: number; matchId: string; senderId: string; body: string; createdAt: string; readAt: string | null }
+
+type MessageRow = { id: number; match_id: string; sender_id: string; body: string; created_at: string; read_at: string | null }
+
+const toMessage = (row: MessageRow): Message => ({
+  id: row.id,
+  matchId: row.match_id,
+  senderId: row.sender_id,
+  body: row.body,
+  createdAt: row.created_at,
+  readAt: row.read_at,
+})
+
+export const MESSAGE_PAGE_SIZE = 40
+
+/** One page of a conversation, oldest first. Pass the smallest loaded id as `beforeId` to load older messages. */
+export async function listMessages(matchId: string, beforeId?: number): Promise<{ messages: Message[]; hasMore: boolean }> {
+  let query = supabaseClient()
+    .from('messages')
+    .select('id, match_id, sender_id, body, created_at, read_at')
+    .eq('match_id', matchId)
+    .order('id', { ascending: false })
+    .limit(MESSAGE_PAGE_SIZE + 1)
+  if (beforeId !== undefined) query = query.lt('id', beforeId)
+  const { data, error } = await query
+  if (error) throw new ApiError(error.message)
+  const rows = data as MessageRow[]
+  return { messages: rows.slice(0, MESSAGE_PAGE_SIZE).map(toMessage).reverse(), hasMore: rows.length > MESSAGE_PAGE_SIZE }
+}
+
+export async function sendMessage(matchId: string, body: string): Promise<void> {
+  const { error } = await supabaseClient().rpc('send_message', { p_match_id: matchId, p_body: body })
+  if (error) throw new ApiError(error.message)
+}
+
+export async function markConversationRead(matchId: string): Promise<void> {
+  const { error } = await supabaseClient().rpc('mark_conversation_read', { p_match_id: matchId })
+  if (error) throw new ApiError(error.message)
+}
+
+/**
+ * Deliver new messages for one conversation as they arrive. Row-level security limits events to members of the
+ * match. Returns a function that stops listening.
+ */
+export function subscribeToMessages(matchId: string, onMessage: (message: Message) => void): () => void {
+  const client = supabaseClient()
+  const channel = client
+    .channel(`messages:${matchId}`)
+    .on(
+      'postgres_changes',
+      { event: 'INSERT', schema: 'public', table: 'messages', filter: `match_id=eq.${matchId}` },
+      (payload) => onMessage(toMessage(payload.new as MessageRow)),
+    )
+    .subscribe()
+  return () => {
+    void client.removeChannel(channel)
+  }
+}
+
+export type NotificationItem = {
+  id: string
+  type: 'match' | 'verification'
+  payload: Record<string, unknown>
+  createdAt: string
+  read: boolean
+}
+
+type NotificationRow = {
+  id: string
+  type: NotificationItem['type']
+  payload: Record<string, unknown>
+  created_at: string
+  read_at: string | null
+}
+
+const toNotification = (row: NotificationRow): NotificationItem => ({
+  id: row.id,
+  type: row.type,
+  payload: row.payload,
+  createdAt: row.created_at,
+  read: row.read_at !== null,
+})
+
+export async function listNotifications(limit = 20): Promise<NotificationItem[]> {
+  const { data, error } = await supabaseClient()
+    .from('notifications')
+    .select('id, type, payload, created_at, read_at')
+    .order('created_at', { ascending: false })
+    .limit(limit)
+  if (error) throw new ApiError(error.message)
+  return (data as NotificationRow[]).map(toNotification)
+}
+
+export async function markNotificationsRead(): Promise<void> {
+  const { error } = await supabaseClient().rpc('mark_notifications_read')
+  if (error) throw new ApiError(error.message)
+}
+
+/** Number of messages the member has not read yet, across all active matches (row-level security scopes the count). */
+export async function countUnreadMessages(): Promise<number> {
+  const userId = await authenticatedUserId()
+  const { count, error } = await supabaseClient()
+    .from('messages')
+    .select('id', { count: 'exact', head: true })
+    .neq('sender_id', userId)
+    .is('read_at', null)
+  if (error) throw new ApiError(error.message)
+  return count ?? 0
+}
+
+/** Listen for new notifications for the signed-in member. Returns a function that stops listening. */
+export function subscribeToNotifications(userId: string, onNotification: (item: NotificationItem) => void): () => void {
+  const client = supabaseClient()
+  const channel = client
+    .channel(`notifications:${userId}`)
+    .on(
+      'postgres_changes',
+      { event: 'INSERT', schema: 'public', table: 'notifications', filter: `user_id=eq.${userId}` },
+      (payload) => onNotification(toNotification(payload.new as NotificationRow)),
+    )
+    .subscribe()
+  return () => {
+    void client.removeChannel(channel)
+  }
+}
+
+/** The signed-in member's Supabase user id, or `null` when signed out. */
+export async function currentUserId(): Promise<string | null> {
+  const { data } = await supabaseClient().auth.getSession()
+  return data.session?.user.id ?? null
+}
+
+export async function unmatch(matchId: string): Promise<void> {
+  const { error } = await supabaseClient().rpc('unmatch_member', { p_match_id: matchId })
+  if (error) throw new ApiError(error.message)
+}
+
+export async function blockMember(memberId: string): Promise<void> {
+  const { error } = await supabaseClient().rpc('block_member', { p_member_id: memberId })
+  if (error) throw new ApiError(error.message)
+}
+
+export type ReportReason = 'fake_profile' | 'harassment' | 'inappropriate_content' | 'scam' | 'underage' | 'other'
+
+export const REPORT_REASONS: { value: ReportReason; label: string }[] = [
+  { value: 'fake_profile', label: 'Fake or misleading profile' },
+  { value: 'harassment', label: 'Harassment or abusive behaviour' },
+  { value: 'inappropriate_content', label: 'Inappropriate content' },
+  { value: 'scam', label: 'Scam or request for money' },
+  { value: 'underage', label: 'Appears to be under 18' },
+  { value: 'other', label: 'Something else' },
+]
+
+export async function reportMember(memberId: string, reason: ReportReason, details: string): Promise<void> {
+  const { error } = await supabaseClient().rpc('report_member', {
+    p_member_id: memberId,
+    p_reason: reason,
+    p_details: details.trim(),
+  })
+  if (error) throw new ApiError(error.message)
+}
+
+export type MyProfile = {
+  fullName: string
+  age: number | null
+  location: string
+  intent: string
+  bio: string
+  prompt: string
+  promptAnswer: string
+  paused: boolean
+  photos: OnboardingPhoto[]
+  verification: IdentityVerificationStatus
+}
+
+/** The member's saved profile, as other members see it, plus their visibility and verification state. */
+export async function getMyProfile(): Promise<MyProfile | null> {
+  const client = supabaseClient()
+  const userId = await authenticatedUserId()
+  const [profileResult, verification] = await Promise.all([
+    client.from('member_profiles')
+      .select('full_name, date_of_birth, location, intent, bio, prompt, prompt_answer, photo_paths, paused_at')
+      .eq('user_id', userId)
+      .maybeSingle(),
+    getIdentityVerificationStatus(),
+  ])
+  if (profileResult.error) throw new ApiError(profileResult.error.message)
+  const row = profileResult.data
+  if (!row) return null
+
+  const [day, month, year] = row.date_of_birth.split('/').map(Number)
+  const born = new Date(year < 50 ? 2000 + year : 1900 + year, month - 1, day)
+  const now = new Date()
+  let age: number | null = now.getFullYear() - born.getFullYear()
+  if (now < new Date(now.getFullYear(), born.getMonth(), born.getDate())) age -= 1
+  if (Number.isNaN(age) || age < 0) age = null
+
+  return {
+    fullName: row.full_name,
+    age,
+    location: row.location,
+    intent: row.intent,
+    bio: row.bio,
+    prompt: row.prompt,
+    promptAnswer: row.prompt_answer,
+    paused: row.paused_at !== null,
+    photos: await signMemberPhotos(row.photo_paths),
+    verification: verification.status,
+  }
+}
+
+export async function setDiscoveryPaused(paused: boolean): Promise<void> {
+  const { error } = await supabaseClient().rpc('set_discovery_paused', { p_paused: paused })
+  if (error) throw new ApiError(error.message)
+}
+
+/** Listen for new messages addressed to this member. The recipient filter keeps Realtime work per member, not global. */
+export function subscribeToIncomingMessages(userId: string, onMessage: (message: Message) => void): () => void {
+  const client = supabaseClient()
+  const channel = client
+    .channel(`messages:inbox:${userId}`)
+    .on(
+      'postgres_changes',
+      { event: 'INSERT', schema: 'public', table: 'messages', filter: `recipient_id=eq.${userId}` },
+      (payload) => onMessage(toMessage(payload.new as MessageRow)),
+    )
+    .subscribe()
+  return () => {
+    void client.removeChannel(channel)
+  }
 }

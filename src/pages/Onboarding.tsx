@@ -4,7 +4,7 @@ import { Check, ChevronRight, Clock, FileText, Briefcase, MapPin, ShieldCheck, t
 import { OnboardingHeader } from '../components/onboarding/OnboardingHeader'
 import { LocationModal } from '../components/onboarding/LocationModal'
 import { STEP_PATH, nextStep, type Step } from '../lib/onboarding'
-import { ApiError, getOnboardingProgress } from '../lib/api'
+import { ApiError, getOnboardingProgress, getOnboardingSummary } from '../lib/api'
 import { firstName, useUser } from '../lib/session'
 
 type Status = 'done' | 'required' | 'not-started'
@@ -51,12 +51,13 @@ function StatusPill({ status }: { status: Status }) {
 
 export function Onboarding() {
   // The location modal appears when a new location is detected; `?location` previews it.
-  const [modalOpen, setModalOpen] = useState(() => new URLSearchParams(window.location.search).has('location'))
+  const [modalOpen, setModalOpen] = useState(() => import.meta.env.DEV && new URLSearchParams(window.location.search).has('location'))
   const navigate = useNavigate()
   const user = useUser()
   const [done, setDone] = useState<Step[]>([])
   const next = nextStep(done)
   const [progressError, setProgressError] = useState('')
+  const [location, setLocation] = useState<string | null>(null)
 
   useEffect(() => {
     let active = true
@@ -70,6 +71,7 @@ export function Onboarding() {
       .catch((error) => {
         if (active) setProgressError(error instanceof ApiError ? error.message : 'Could not load onboarding progress.')
       })
+    getOnboardingSummary().then((summary) => active && setLocation(summary.location), () => {})
     return () => { active = false }
   }, [])
 
@@ -108,7 +110,7 @@ export function Onboarding() {
           </p>
           <p className="flex h-9 items-center gap-[9px] rounded-full border border-[#e4dcd1] bg-[#efe8d8] pl-[15px] pr-[30px]">
             <MapPin size={10} strokeWidth={1.5} className="text-[#967a36]" aria-hidden /> Based in:{' '}
-            <span className="-ml-1 font-medium">Ikeja, Lagos</span>
+            <span className="-ml-1 font-medium">{location ?? 'Not set yet'}</span>
           </p>
         </div>
 
@@ -176,7 +178,7 @@ export function Onboarding() {
       </main>
 
       {modalOpen && (
-        <LocationModal location="ikeja, Lagos" onClose={() => setModalOpen(false)} onConfirm={() => setModalOpen(false)} />
+        <LocationModal location={location ?? ''} onClose={() => setModalOpen(false)} onConfirm={() => setModalOpen(false)} />
       )}
     </div>
   )

@@ -136,11 +136,10 @@ export function OrContinueWith({
       </button>
       <button
         type="button"
-        disabled={disabled}
-        onClick={() => onProvider('apple')}
-        className={`mt-3.5 ${socialClass} disabled:cursor-not-allowed disabled:opacity-60`}
+        onClick={() => {}}
+        className={`mt-3.5 ${socialClass}`}
       >
-        <AppleIcon /> {pendingProvider === 'apple' ? 'Connecting...' : 'Continue with Apple'}
+        <AppleIcon /> Continue with Apple
       </button>
     </>
   )

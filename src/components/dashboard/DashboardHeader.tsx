@@ -1,6 +1,8 @@
-import { Bell, Compass, Heart, House, MessageSquare, User } from 'lucide-react'
+import { Compass, Heart, House, MessageSquare, User } from 'lucide-react'
 import { Link, NavLink } from 'react-router-dom'
+import { useUnreadMessages } from '../../hooks/useUnreadMessages'
 import { initialOf, useUser } from '../../lib/session'
+import { NotificationBell } from './NotificationBell'
 
 const links = [
   { to: '/dashboard', label: 'Home', icon: House },
@@ -10,9 +12,19 @@ const links = [
   { to: '/profile', label: 'Profile', icon: User },
 ]
 
-// Signed-in app header. The nav targets other than /dashboard are not built yet (no frames).
+function Badge({ count }: { count: number }) {
+  return (
+    <span className="flex h-4 min-w-4 items-center justify-center rounded-full bg-[#c0452c] px-1 text-[10px] leading-none text-cream">
+      <span className="sr-only">{count} unread</span>
+      <span aria-hidden>{count > 9 ? '9+' : count}</span>
+    </span>
+  )
+}
+
+// Signed-in app header and (below 768px) bottom tab bar.
 export function DashboardHeader() {
   const user = useUser()
+  const unread = useUnreadMessages()
   return (
     <>
     <header className="border-b border-[#393631] bg-ink">
@@ -27,26 +39,20 @@ export function DashboardHeader() {
             <NavLink
               key={label}
               to={to}
-              end
+              end={to === '/dashboard'}
               className={({ isActive }) =>
                 `flex items-center gap-[9px] text-[14px] font-medium ${isActive ? 'text-gold' : 'text-[#b7af9c]'}`
               }
             >
               <Icon size={14} strokeWidth={1.5} />
               {label}
+              {to === '/messages' && unread > 0 && <Badge count={unread} />}
             </NavLink>
           ))}
         </nav>
 
         <div className="ml-auto flex items-center gap-[18px]">
-          <button
-            type="button"
-            aria-label="Notifications"
-            className="relative flex size-[38px] items-center justify-center rounded-full border border-[#e4dcd1] bg-cream text-ink"
-          >
-            <Bell size={18} strokeWidth={1.25} />
-            <span className="absolute right-[10px] top-[9px] size-[7px] rounded-full border border-[#8f3a27] bg-[#c0452c]" aria-hidden />
-          </button>
+          <NotificationBell />
           <Link
             to="/profile"
             aria-label="Your profile"
@@ -67,13 +73,14 @@ export function DashboardHeader() {
         <NavLink
           key={label}
           to={to}
-          end
+          end={to === '/dashboard'}
           className={({ isActive }) =>
             `flex flex-col items-center gap-[9px] text-[14px] font-medium ${isActive ? 'text-gold' : 'text-[#b7af9c]'}`
           }
         >
           <Icon size={14} strokeWidth={1.5} />
           {label}
+          {to === '/messages' && unread > 0 && <Badge count={unread} />}
         </NavLink>
       ))}
     </nav>

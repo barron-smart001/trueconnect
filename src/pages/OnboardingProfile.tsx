@@ -109,7 +109,7 @@ export function OnboardingProfile() {
     dateOfBirth: '',
     gender: '',
     phone: '',
-    location: 'Lagos, Nigeria',
+    location: '',
     intent: '',
     bio: '',
     prompt: prompts[0],
