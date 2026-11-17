@@ -137,6 +137,38 @@ export type OnboardingCompatibilityDraft = {
 export type OnboardingPhoto = { path: string; url: string }
 export type OnboardingPhotoSelection = { file: File } | { path: string }
 
+function toDateInputValue(value: string): string {
+  const isoDate = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value)
+  if (isoDate) return isValidCalendarDate(isoDate[1], isoDate[2], isoDate[3]) ? value : ''
+
+  const legacyDate = /^(\d{2})\/(\d{2})\/(\d{2})$/.exec(value)
+  if (!legacyDate) return ''
+
+  const [, day, month, shortYear] = legacyDate
+  const yearNumber = Number(shortYear)
+  const year = yearNumber < 50 ? 2000 + yearNumber : 1900 + yearNumber
+  const date = `${year}-${month}-${day}`
+  return isValidCalendarDate(String(year), month, day) ? date : ''
+}
+
+function isValidCalendarDate(year: string, month: string, day: string): boolean {
+  const date = new Date(0)
+  date.setUTCFullYear(Number(year), Number(month) - 1, Number(day))
+  return date.getUTCFullYear() === Number(year)
+    && date.getUTCMonth() === Number(month) - 1
+    && date.getUTCDate() === Number(day)
+}
+
+function toStoredBirthDate(value: string): string {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value)
+  if (!match) throw new ApiError('Choose a valid date of birth.')
+
+  const [, year, month, day] = match
+  if (!isValidCalendarDate(year, month, day)) throw new ApiError('Choose a valid date of birth.')
+
+  return `${day}/${month}/${year.slice(-2)}`
+}
+
 async function uploadMemberPhotos(
   client: ReturnType<typeof supabaseClient>,
   userId: string,
@@ -205,7 +237,7 @@ export async function getOnboardingProfileDraft(): Promise<{
   const savedProfile = profileResult.data
   const savedFields: OnboardingProfileFields | null = savedProfile ? {
     fullName: savedProfile.full_name,
-    dateOfBirth: savedProfile.date_of_birth,
+    dateOfBirth: toDateInputValue(savedProfile.date_of_birth),
     gender: savedProfile.gender,
     phone: savedProfile.phone.replace(/^\+234/, ''),
     location: savedProfile.location,
@@ -214,7 +246,10 @@ export async function getOnboardingProfileDraft(): Promise<{
     prompt: savedProfile.prompt,
     promptAnswer: savedProfile.prompt_answer,
   } : null
-  const draftFields = draftResult.data?.profile_draft as OnboardingProfileFields | null
+  const storedDraftFields = draftResult.data?.profile_draft as OnboardingProfileFields | null
+  const draftFields = storedDraftFields
+    ? { ...storedDraftFields, dateOfBirth: toDateInputValue(storedDraftFields.dateOfBirth) }
+    : null
   const fields = draftFields ?? savedFields
   const paths = draftFields
     ? draftResult.data?.profile_photo_paths ?? []
@@ -286,6 +321,7 @@ export async function saveOnboardingProfile(input: OnboardingProfileFields & {
 }): Promise<void> {
   const client = supabaseClient()
   const userId = await authenticatedUserId()
+  const dateOfBirth = toStoredBirthDate(input.dateOfBirth)
   const { data: city, error: cityError } = await client
     .from('supported_cities')
     .select('id')
@@ -330,7 +366,7 @@ export async function saveOnboardingProfile(input: OnboardingProfileFields & {
     user_id: userId,
     city_id: city.id,
     full_name: input.fullName.trim(),
-    date_of_birth: input.dateOfBirth.trim(),
+    date_of_birth: dateOfBirth,
     gender: input.gender,
     phone: input.phone.trim(),
     location: input.location.trim(),

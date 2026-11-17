@@ -122,6 +122,10 @@ export function OnboardingProfile() {
   const [photos, setPhotos] = useState<(Photo | null)[]>(Array(MAX_PHOTOS).fill(null))
   const prompt = Math.max(0, prompts.indexOf(fields.prompt))
   const added = photos.filter(Boolean).length
+  const [maxBirthDate] = useState(() => {
+    const today = new Date()
+    return `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`
+  })
 
   useEffect(() => () => photoUrls.current.forEach((url) => URL.revokeObjectURL(url)), [])
 
@@ -223,10 +227,7 @@ export function OnboardingProfile() {
           </Field>
 
           <Field label="Date of Birth *" htmlFor="dob">
-            <div className="relative">
-              <input id="dob" name="dob" type="text" value={fields.dateOfBirth} onChange={(event) => setFields((current) => ({ ...current, dateOfBirth: event.target.value }))} placeholder="DD/MM/YY" inputMode="numeric" pattern="[0-9]{2}/[0-9]{2}/[0-9]{2}" title="Enter your date of birth as DD/MM/YY" required className={`${controlClass} pr-10`} />
-              <ChevronDown size={14} className="pointer-events-none absolute right-4 top-1/2 -translate-y-1/2 text-[#5c5748]" aria-hidden />
-            </div>
+            <input id="dob" name="dob" type="date" value={fields.dateOfBirth} max={maxBirthDate} onChange={(event) => setFields((current) => ({ ...current, dateOfBirth: event.target.value }))} required className={`${controlClass} cursor-pointer`} />
           </Field>
           <Field label="Gender *" htmlFor="gender" className="mt-2 md:mt-0">
             <SelectField id="gender" placeholder="Select your gender" options={['Female', 'Male', 'Prefer not to say']} value={fields.gender} onChange={(gender) => setFields((current) => ({ ...current, gender }))} />

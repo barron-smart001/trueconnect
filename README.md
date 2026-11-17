@@ -4,6 +4,8 @@ Web frontend for TrueConnect, a verified, intent-based relationship platform for
 This repo contains the TrueConnect frontend and Supabase migrations/Edge Functions. Authentication, newsletter
 subscriptions, onboarding profile data, Persona identity-verification status, and dashboard discovery use Supabase.
 
+- **Status (as of 8 Nov 2026):** feature-complete for a first launch candidate, but **not yet verified against a live
+  Supabase project** or launched. See [Status and what's left](#status-and-whats-left) for the remaining work and how to do it.
 - **Stack:** React 19, TypeScript, Vite, Tailwind CSS v4, React Router v7, lucide-react icons
 - **Scope built so far:** desktop (1440px) for the homepage, auth pages and onboarding; the **tablet homepage, auth pages, onboarding and dashboard** (designed at 1024px); the **mobile homepage, menu, auth pages, onboarding and dashboard** (designed at 375px). Breakpoints: base = mobile, `md:` (768px) = tablet, `xl:` (1280px) = desktop.
 - **Design source:** the Figma file "Trueconnect". Screens were matched to the design by measurement, so spacing and text sizes are pixel-accurate at the design widths.
@@ -37,8 +39,9 @@ redirect URLs, including `http://localhost:5173/auth/callback` for local develop
 dashboard. Apple may only provide a user's name on their first authorization, so the app falls back to the email name
 when the provider does not return it later.
 
-Run the SQL files in `supabase/migrations/` in filename order (the latest, `202611030001_matches_messaging_safety.sql`, adds
-mutual matches, messages, notifications, block/report, contact messages and discovery pause) in the Supabase project's SQL Editor. They create the
+Run the SQL files in `supabase/migrations/` in filename order (nine files; `202611030001_matches_messaging_safety.sql` adds
+mutual matches, messages, notifications, block/report, contact messages and discovery pause, `202611030002_scale_indexes.sql`
+adds indexes and `202611030003_app_settings.sql` adds tunable limits) in the Supabase project's SQL Editor. They create the
 newsletter subscriber table, private onboarding tables, private member photo storage and identity status, plus the
 private onboarding-drafts table, city directory, discovery preferences, and server-side matching/action functions with
 row-level security.
@@ -96,16 +99,18 @@ variables.
 | `/messages`, `/messages/:matchId` | Realtime one-to-one messaging with block / report / unmatch | `src/pages/Messages.tsx` |
 | `/profile` | Own profile preview, verification status, pause visibility, sign out, delete account | `src/pages/Profile.tsx` |
 | `/contact` | Contact form (rate-limited, stored for the support team) | `src/pages/Contact.tsx` |
-| `/membership` `/about` `/careers` `/press` `/safety` `/help` `/guidelines` `/privacy` `/terms` `/cookies` `/ambassador` `/invite` | "Coming soon" (no designs yet), inside the marketing header and footer | `src/pages/Placeholder.tsx` |
-| anything else | 404 | `src/pages/Placeholder.tsx` |
+| `/membership` `/about` `/careers` `/press` `/safety` `/help` `/guidelines` `/privacy` `/terms` `/cookies` `/ambassador` `/invite` | Info and legal pages with real copy (no Figma designs), inside the marketing header and footer. Content lives in the `infoPages` map | `src/pages/Info.tsx` |
+| `/auth/callback` | OAuth / email-confirmation return handler | `src/pages/AuthCallback.tsx` |
+| anything else | 404 | `src/pages/Placeholder.tsx` (`NotFound`) |
 
 Routes are declared in `src/App.tsx`. Signed-in routes are wrapped in `RequireAuth`, which follows the Supabase session
 (`useAuthStatus()` in `src/lib/session.ts`) and redirects signed-out visitors to `/signin?next=<path>`. This guard is a
 usability feature only: every table and function is protected by row-level security in the database, which is the real
 authorization boundary. All pages except the homepage and the sign-in/sign-up forms are code-split.
 
-The "Coming soon" and 404 pages are **not from Figma** — they exist so no link in the app dead-ends. Replace each page
-when its design arrives (delete its entry from the two lists in `App.tsx`).
+The info/legal pages and the 404 page are **not from Figma**. To change an info page, edit its entry in `infoPages` in
+`src/pages/Info.tsx`; to add one, add an entry there and its path to `infoPaths` in `App.tsx`. The legal copy (privacy,
+terms, cookies) is a working draft and **must be reviewed by a lawyer before launch**.
 
 ## 3. Project structure
 
@@ -201,7 +206,7 @@ To report a failure, throw `new ApiError(message, field)`: the page shows `messa
   status, determine which checklist steps are Done and where Continue sends the member. Unfinished profile and question
   drafts are stored in the private `member_onboarding_drafts` table; selected profile photos remain in private storage.
 - **Navigation:** every link goes somewhere. Header, hero, footer and menu links scroll to the matching homepage section
-  (`#how-it-works`, `#safety`, `#find-your-lane`, `#reviews`) or open a "Coming soon" page. Each navigation scrolls to the
+  (`#how-it-works`, `#safety`, `#find-your-lane`, `#reviews`) or open the matching info page. Each navigation scrolls to the
   top (or to the anchor) and sets the page title.
 - **Dashboard:** see below.
 
@@ -232,14 +237,14 @@ members can discover. The mobile "Active this week" toggle filters using dashboa
 | Profile card | Recommendations come from completed member profiles; signed photo URLs are available only for approved photos. Like / pass / undo / save actions persist in Supabase and are scoped to the signed-in member. A like the other member already made creates a match (database trigger) and a notification; matched likes cannot be undone. Blocked, paused and unmatched members never appear. | Complete profile photo galleries are not implemented. |
 | Introductions | The server enforces a limit of 15 recorded likes/passes per member per day, using the member's local timezone; undo removes the latest same-day action. The count no longer starts from demo data. | |
 | Quick preferences | Shows the applied filters; the "Verified only" toggle changes the filter immediately. | |
-| Safety note | "Visit Safety Center" opens `/safety` ("Coming soon"). | |
+| Safety note | "Visit Safety Center" opens `/safety`. | |
 
 ### Content and data that is placeholder
 
 - **Dropdown options:** Gender (`Female`, `Male`, `Prefer not to say`) and "What are you looking for?"
   (`Marriage-minded`, `Meaningful Dating`, `Concierge & discreet`, taken from the homepage). Confirm the real lists
   with product.
-- **Date of birth** is a plain text box (`DD/MM/YY`) with a chevron — not a date picker.
+- **Date of birth** uses a calendar date picker; values are converted to `DD/MM/YY` when saved for database compatibility.
 - **Homepage:** all copy is static. Reviews, stats ("1,200+ verified reviews", "4.9") and cities are hardcoded.
 - **Consent checkboxes** (sign up, identity verification) start **unchecked**, although the Figma frames show them
   checked. They are legal confirmations, so pre-ticking is not recommended.
@@ -279,8 +284,36 @@ names) before launch.
 - Desktop (1440px) is built for the homepage, auth pages and onboarding; tablet (1024px) for those plus the dashboard;
   mobile (375px) for all of those too. Widths between the design widths (for example 800px or 1100px) are not designed: the layout clips instead of
   scrolling sideways.
-- The dashboard has no desktop frame. The "Coming soon" and 404 pages have no design.
+- The dashboard has no desktop frame. The info/legal pages and the 404 page have no design.
 - No automated tests are committed. See the production checklist for what to exercise against staging.
+
+## Status and what's left
+
+### Done
+- Marketing homepage, auth (email/password, Google, Apple, password reset), onboarding (profile, questions, Persona identity check).
+- Discovery dashboard with server-side matching, like / pass / undo / save and a daily introduction limit.
+- Mutual matches, realtime messaging, notifications, block / report / unmatch, pause visibility, account deletion, contact form.
+- Info and legal pages (`src/pages/Info.tsx`), auth guard, error boundary, SPA rewrite and security headers on Vercel, CI (lint + build).
+- Nine Supabase migrations and three Edge Functions (`persona-create-inquiry`, `persona-webhook`, `delete-account`).
+
+### Left to do (in priority order)
+1. **Verify the backend on a staging Supabase project.** The latest migrations have never been run against a database.
+   *How:* create a staging project, apply all migrations (`supabase db push`), deploy the three functions, set the secrets, then run
+   `node scripts/e2e-connect.mjs` and manually test: mutual like -> match + notifications, messaging between two accounts,
+   block / report, pause, account deletion, contact form. Run the Database Advisor afterwards.
+2. **Configure auth for production.** *How:* Supabase -> Authentication: email confirmation, Site URL and redirect URLs
+   (`/auth/callback`, `/update-password`), leaked-password protection, longer minimum password, CAPTCHA, sign-in / sign-up rate limits; enable Google and Apple providers (section 1).
+3. **Persona go-live.** *How:* test in Sandbox first, then switch `PERSONA_API_KEY`, `PERSONA_INQUIRY_TEMPLATE_ID` and `PERSONA_WEBHOOK_SECRET` to production values and subscribe the webhook to the four events (section 1).
+4. **Seed launch cities** in `supported_cities` (no admin UI; members in unlisted cities cannot save profiles or be matched).
+   *How:* insert rows in the SQL Editor; consider a small admin tool later.
+5. **Schedule `select public.prune_history();` daily** (Supabase -> Integrations -> Cron).
+6. **Legal review** of privacy, terms, cookies and the community guidelines text in `Info.tsx`, and replace the placeholder
+   contact / company details.
+7. **Hosting.** *How:* set `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY` in Vercel, deploy, and extend the CSP in `vercel.json` if you add analytics or error tracking.
+8. **Design and content gaps.** Replace the soft Figma-cropped images (section 6); replace hardcoded homepage reviews / stats, the
+   onboarding "Ikeja, Lagos" location and "3 potential matches" figures with real data;
+   confirm the gender / looking-for option lists with product; add social links in the footer; remove the dev-only preview shortcuts before production.
+9. **Later / nice to have:** dashboard desktop design, in-between breakpoints, a profile photo gallery, an admin tool for reports and contact messages, unit and component tests, PostGIS ranking if discovery outgrows a few hundred thousand members.
 
 ## 9. Production checklist
 
@@ -316,6 +349,6 @@ names) before launch.
 - Persona: switch from Sandbox to production credentials, template and webhook secret.
 
 **Not yet verified**
-- The SQL in `202611030001_matches_messaging_safety.sql` has not been executed against a database. Apply it to a staging
+- The SQL in `202611030001_matches_messaging_safety.sql` (and the two later migrations) has not been executed against a database. Apply it to a staging
   project first and exercise: mutual like -> match + notifications, messaging between two accounts, block/report, pause,
   account deletion, and the contact form.
